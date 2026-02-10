@@ -68,8 +68,8 @@ describe("BridgeVault", function () {
       }
     });
 
-    it("Should set first signer as releaseCaller", async function () {
-      expect(await vault.releaseCaller()).to.equal(owner.address);
+    it("Should initialize with no releaseCaller", async function () {
+      expect(await vault.releaseCaller()).to.equal(ethers.ZeroAddress);
     });
 
     it("Should have correct chainId", async function () {
@@ -95,7 +95,7 @@ describe("BridgeVault", function () {
       await liberdus.connect(owner).approve(await vault.getAddress(), lockAmount);
 
       // Lock tokens and check event (without exact timestamp match)
-      await expect(vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, recipient.address, destinationChainId))
+      await expect(vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, recipient.address, chainId, destinationChainId))
         .to.emit(vault, "TokensLocked");
 
       expect(await vault.getVaultBalance()).to.equal(lockAmount);
@@ -104,7 +104,7 @@ describe("BridgeVault", function () {
 
     it("Should reject locking zero tokens", async function () {
       await expect(
-        vault.connect(owner)["lockTokens(uint256,address,uint256)"](0, recipient.address, destinationChainId)
+        vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](0, recipient.address, chainId, destinationChainId)
       ).to.be.revertedWith("Cannot lock zero tokens");
     });
 
@@ -113,7 +113,7 @@ describe("BridgeVault", function () {
       await liberdus.connect(owner).approve(await vault.getAddress(), lockAmount);
 
       await expect(
-        vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, ethers.ZeroAddress, destinationChainId)
+        vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, ethers.ZeroAddress, chainId, destinationChainId)
       ).to.be.revertedWith("Invalid target address");
     });
 
@@ -121,7 +121,7 @@ describe("BridgeVault", function () {
       const lockAmount = ethers.parseUnits("1000", 18);
 
       await expect(
-        vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, recipient.address, destinationChainId)
+        vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, recipient.address, chainId, destinationChainId)
       ).to.be.reverted;
     });
 
@@ -133,7 +133,7 @@ describe("BridgeVault", function () {
       await requestAndSignOperation(vault, 0, ethers.ZeroAddress, 0, "0x");
 
       await expect(
-        vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, recipient.address, destinationChainId)
+        vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, recipient.address, chainId, destinationChainId)
       ).to.be.revertedWithCustomError(vault, "EnforcedPause");
     });
   });
@@ -145,14 +145,22 @@ describe("BridgeVault", function () {
       await setupLiberdusWithTokens();
       // Lock tokens first
       await liberdus.connect(owner).approve(await vault.getAddress(), lockAmount);
-      await vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, recipient.address, destinationChainId);
+      await vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, recipient.address, chainId, destinationChainId);
+    });
+
+    it("Should set release caller before releasing", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
+      expect(await vault.releaseCaller()).to.equal(owner.address);
     });
 
     it("Should release tokens successfully", async function () {
+      // Set releaseCaller first
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
+
       const releaseAmount = ethers.parseUnits("1000", 18);
       const txId = ethers.id("test-tx-1");
 
-      await expect(vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId, sourceChainId))
+      await expect(vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId, sourceChainId))
         .to.emit(vault, "TokensReleased");
 
       expect(await liberdus.balanceOf(recipient.address)).to.equal(releaseAmount);
@@ -164,47 +172,51 @@ describe("BridgeVault", function () {
       const txId = ethers.id("test-tx-1");
 
       await expect(
-        vault.connect(other)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId, sourceChainId)
+        vault.connect(other)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId, sourceChainId)
       ).to.be.revertedWith("Not authorized to release");
     });
 
     it("Should reject releasing zero tokens", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
       const txId = ethers.id("test-tx-1");
 
       await expect(
-        vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, 0, txId, sourceChainId)
+        vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, 0, chainId, txId, sourceChainId)
       ).to.be.revertedWith("Cannot release zero tokens");
     });
 
     it("Should reject releasing to zero address", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
       const releaseAmount = ethers.parseUnits("1000", 18);
       const txId = ethers.id("test-tx-1");
 
       await expect(
-        vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](ethers.ZeroAddress, releaseAmount, txId, sourceChainId)
+        vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](ethers.ZeroAddress, releaseAmount, chainId, txId, sourceChainId)
       ).to.be.revertedWith("Invalid recipient address");
     });
 
     it("Should reject releasing more than maxReleaseAmount", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
       const tooMuch = ethers.parseUnits("10001", 18);
       const txId = ethers.id("test-tx-1");
 
       await expect(
-        vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, tooMuch, txId, sourceChainId)
+        vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, tooMuch, chainId, txId, sourceChainId)
       ).to.be.revertedWith("Amount exceeds release limit");
     });
 
     it("Should enforce release cooldown", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
       const releaseAmount = ethers.parseUnits("1000", 18);
       const txId1 = ethers.id("test-tx-1");
       const txId2 = ethers.id("test-tx-2");
 
       // First release
-      await vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId1, sourceChainId);
+      await vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId1, sourceChainId);
 
       // Immediate second release should fail
       await expect(
-        vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId2, sourceChainId)
+        vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId2, sourceChainId)
       ).to.be.revertedWith("Release cooldown not met");
 
       // Wait for cooldown
@@ -212,16 +224,17 @@ describe("BridgeVault", function () {
       await network.provider.send("evm_mine");
 
       // Should succeed after cooldown
-      await vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId2, sourceChainId);
+      await vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId2, sourceChainId);
       expect(await liberdus.balanceOf(recipient.address)).to.equal(releaseAmount * BigInt(2));
     });
 
     it("Should prevent replay with same txId", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
       const releaseAmount = ethers.parseUnits("1000", 18);
       const txId = ethers.id("test-tx-1");
 
       // First release
-      await vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId, sourceChainId);
+      await vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId, sourceChainId);
 
       // Wait for cooldown
       await network.provider.send("evm_increaseTime", [61]);
@@ -229,20 +242,22 @@ describe("BridgeVault", function () {
 
       // Same txId should fail
       await expect(
-        vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId, sourceChainId)
+        vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId, sourceChainId)
       ).to.be.revertedWith("Transaction already processed");
     });
 
     it("Should reject release with insufficient vault balance", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
       const releaseAmount = ethers.parseUnits("6000", 18); // More than locked
       const txId = ethers.id("test-tx-1");
 
       await expect(
-        vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId, sourceChainId)
+        vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId, sourceChainId)
       ).to.be.revertedWith("Insufficient vault balance");
     });
 
     it("Should reject release when paused", async function () {
+      await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
       const releaseAmount = ethers.parseUnits("1000", 18);
       const txId = ethers.id("test-tx-1");
 
@@ -250,7 +265,7 @@ describe("BridgeVault", function () {
       await requestAndSignOperation(vault, 0, ethers.ZeroAddress, 0, "0x");
 
       await expect(
-        vault.connect(owner)["releaseTokens(address,uint256,bytes32,uint256)"](recipient.address, releaseAmount, txId, sourceChainId)
+        vault.connect(owner)["releaseTokens(address,uint256,uint256,bytes32,uint256)"](recipient.address, releaseAmount, chainId, txId, sourceChainId)
       ).to.be.revertedWithCustomError(vault, "EnforcedPause");
     });
   });
@@ -279,12 +294,12 @@ describe("BridgeVault", function () {
       // Pause
       await requestAndSignOperation(vault, 0, ethers.ZeroAddress, 0, "0x");
       await expect(
-        vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, recipient.address, destinationChainId)
+        vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, recipient.address, chainId, destinationChainId)
       ).to.be.revertedWithCustomError(vault, "EnforcedPause");
 
       // Unpause
       await requestAndSignOperation(vault, 1, ethers.ZeroAddress, 0, "0x");
-      await vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, recipient.address, destinationChainId);
+      await vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, recipient.address, chainId, destinationChainId);
       expect(await vault.getVaultBalance()).to.equal(lockAmount);
     });
 
@@ -350,7 +365,7 @@ describe("BridgeVault", function () {
       await setupLiberdusWithTokens();
       const lockAmount = ethers.parseUnits("1000", 18);
       await liberdus.connect(owner).approve(await vault.getAddress(), lockAmount);
-      await vault.connect(owner)["lockTokens(uint256,address,uint256)"](lockAmount, recipient.address, destinationChainId);
+      await vault.connect(owner)["lockTokens(uint256,address,uint256,uint256)"](lockAmount, recipient.address, chainId, destinationChainId);
 
       expect(await vault.getVaultBalance()).to.equal(lockAmount);
     });

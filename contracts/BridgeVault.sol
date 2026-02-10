@@ -265,29 +265,31 @@ contract BridgeVault is Pausable, ReentrancyGuard, Ownable {
 
     // --------- LOCK & RELEASE ---------
 
-    function lockTokens(uint256 amount, address targetAddress, uint256 destinationChainId) public whenNotPaused {
-        lockTokens(amount, targetAddress, destinationChainId, DEFAULT_CHAIN_ID);
+    function lockTokens(uint256 amount, address targetAddress, uint256 _chainId) public whenNotPaused {
+        lockTokens(amount, targetAddress, _chainId, DEFAULT_CHAIN_ID);
     }
 
-    function lockTokens(uint256 amount, address targetAddress, uint256 destinationChainId, uint256 _destinationChainId) public whenNotPaused {
+    function lockTokens(uint256 amount, address targetAddress, uint256 _chainId, uint256 destinationChainId) public whenNotPaused {
         require(amount > 0, "Cannot lock zero tokens");
         require(targetAddress != address(0), "Invalid target address");
-        if (_destinationChainId != DEFAULT_CHAIN_ID) {
-            require(_destinationChainId != chainId, "Destination chain must differ from source chain");
+        require(_chainId == chainId, "Invalid chain ID");
+        if (destinationChainId != DEFAULT_CHAIN_ID) {
+            require(destinationChainId != _chainId, "Destination chain must differ from source chain");
         }
 
         require(token.transferFrom(msg.sender, address(this), amount), "Token transfer failed");
 
-        emit TokensLocked(msg.sender, amount, targetAddress, chainId, block.timestamp, destinationChainId);
+        emit TokensLocked(msg.sender, amount, targetAddress, _chainId, block.timestamp, destinationChainId);
     }
 
-    function releaseTokens(address to, uint256 amount, bytes32 txId) public onlyReleaseCaller whenNotPaused {
-        releaseTokens(to, amount, txId, DEFAULT_CHAIN_ID);
+    function releaseTokens(address to, uint256 amount, uint256 _chainId, bytes32 txId) public onlyReleaseCaller whenNotPaused {
+        releaseTokens(to, amount, _chainId, txId, DEFAULT_CHAIN_ID);
     }
 
-    function releaseTokens(address to, uint256 amount, bytes32 txId, uint256 sourceChainId) public onlyReleaseCaller whenNotPaused nonReentrant {
+    function releaseTokens(address to, uint256 amount, uint256 _chainId, bytes32 txId, uint256 sourceChainId) public onlyReleaseCaller whenNotPaused nonReentrant {
         require(amount > 0, "Cannot release zero tokens");
         require(to != address(0), "Invalid recipient address");
+        require(_chainId == chainId, "Invalid chain ID");
         require(amount <= maxReleaseAmount, "Amount exceeds release limit");
         require(block.timestamp >= lastReleaseTime + releaseCooldown, "Release cooldown not met");
         require(!processedTxIds[txId], "Transaction already processed");
@@ -299,7 +301,7 @@ contract BridgeVault is Pausable, ReentrancyGuard, Ownable {
 
         require(token.transfer(to, amount), "Token transfer failed");
 
-        emit TokensReleased(to, amount, chainId, txId, block.timestamp, sourceChainId);
+        emit TokensReleased(to, amount, _chainId, txId, block.timestamp, sourceChainId);
     }
 
     // --------- HELPER FUNCTIONS ---------
