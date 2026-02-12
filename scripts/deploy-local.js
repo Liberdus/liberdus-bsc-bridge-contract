@@ -108,13 +108,9 @@ async function main() {
   // ====================================================
   console.log("\n--- Setting up LiberdusSecondary (Secondary) ---");
 
-  // PostLaunch (OpType 0)
-  console.log("Switching to PostLaunch...");
-  await requestAndSignOperation(liberdusSecondary, 0, ZeroAddress, 0, "0x");
-
-  // Set BridgeInCaller (OpType 3) - allowing deployer to act as bridge
+  // Set BridgeInCaller (OpType 2) - allowing deployer to act as bridge
   console.log("Setting BridgeInCaller to deployer...");
-  await requestAndSignOperation(liberdusSecondary, 3, deployer.address, 0, "0x");
+  await requestAndSignOperation(liberdusSecondary, 2, deployer.address, 0, "0x");
 
 
   // ====================================================

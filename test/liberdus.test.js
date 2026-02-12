@@ -49,7 +49,7 @@ describe("LiberdusToken", function () {
     // Modified test
     it('Should deploy the contract correctly with four signers', async function () {
         expect(await liberdus.name()).to.equal("Liberdus");
-        expect(await liberdus.symbol()).to.equal("LBD");
+        expect(await liberdus.symbol()).to.equal("LIB");
         expect(await liberdus.getChainId()).to.equal(chainId);
 
         // Verify all four signers

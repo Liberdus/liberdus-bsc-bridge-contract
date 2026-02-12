@@ -30,11 +30,13 @@ async function main() {
   // Attach to deployed contract
   const contract = await hre.ethers.getContractAt(CONTRACT_NAME, CONTRACT_ADDRESS);
 
-  // Verify state
-  const isPreLaunch = await contract.isPreLaunch();
-  console.log("isPreLaunch:", isPreLaunch);
-  if (isPreLaunch) {
-    throw new Error("Contract is still in pre-launch mode. Bridge out not available.");
+  // Verify state (only primary contract has isPreLaunch)
+  if (CONTRACT_TYPE === "PRIMARY") {
+    const isPreLaunch = await contract.isPreLaunch();
+    console.log("isPreLaunch:", isPreLaunch);
+    if (isPreLaunch) {
+      throw new Error("Contract is still in pre-launch mode. Bridge out not available.");
+    }
   }
 
   // Bridge out tokens

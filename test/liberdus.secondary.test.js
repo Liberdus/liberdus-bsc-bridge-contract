@@ -46,7 +46,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should set bridge in caller via multisig", async function () {
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
     expect(await liberdus.bridgeInCaller()).to.equal(bridgeInCaller.address);
   });
 
@@ -55,30 +55,13 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
     const newCooldown = BigInt(2 * 60);
     const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [newCooldown]);
 
-    await requestAndSignOperation(4, ethers.ZeroAddress, newMaxAmount, encodedData);
+    await requestAndSignOperation(3, ethers.ZeroAddress, newMaxAmount, encodedData);
     expect(await liberdus.maxBridgeInAmount()).to.equal(newMaxAmount);
     expect(await liberdus.bridgeInCooldown()).to.equal(newCooldown);
   });
 
-  it("Should not allow bridgeIn or bridgeOut before post-launch", async function () {
-    // Set bridgeInCaller
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
-    // Try to bridge in
-    const bridgeInAmount = ethers.parseUnits("1000", 18);
-    await expect(
-      liberdus.connect(bridgeInCaller)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, ethers.id("testTxId"), sourceChainId)
-    ).to.be.revertedWith("Bridge in not available in pre-launch");
-
-    // Try to bridge out
-    await expect(
-      liberdus.connect(recipient)["bridgeOut(uint256,address,uint256,uint256)"](bridgeInAmount, owner.address, chainId, destinationChainId)
-    ).to.be.revertedWith("Bridge out not available in pre-launch");
-  });
-
-  it("Should enable bridgeIn and bridgeOut after post-launch", async function () {
-    // Set bridgeInCaller and post-launch
-    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // PostLaunch
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+  it("Should allow bridgeIn and bridgeOut", async function () {
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
 
     // Bridge in tokens
     const bridgeInAmount = ethers.parseUnits("1000", 18);
@@ -92,8 +75,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should not allow bridgeIn with wrong bridgeInCaller", async function () {
-    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // PostLaunch
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
 
     const bridgeInAmount = ethers.parseUnits("1000", 18);
     await expect(
@@ -102,8 +84,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should not allow bridgeIn or bridgeOut with wrong chainId", async function () {
-    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // PostLaunch
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
 
     const bridgeInAmount = ethers.parseUnits("1000", 18);
     const wrongChainId = chainId + BigInt(1);
@@ -127,8 +108,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should enforce maxBridgeInAmount and cooldown", async function () {
-    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // PostLaunch
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
     const tooMuch = ethers.parseUnits("10001", 18);
 
     await expect(
@@ -146,24 +126,23 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should pause and unpause via multisig", async function () {
-    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // PostLaunch
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
     const bridgeInAmount = ethers.parseUnits("1000", 18);
 
     await liberdus.connect(bridgeInCaller)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, ethers.id("testTxId"), sourceChainId);
 
-    await requestAndSignOperation(1, ethers.ZeroAddress, 0, "0x"); // Pause
+    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // Pause
     await expect(
       liberdus.connect(recipient).transfer(owner.address, bridgeInAmount)
     ).to.be.revertedWithCustomError(liberdus, "EnforcedPause");
 
-    await requestAndSignOperation(2, ethers.ZeroAddress, 0, "0x"); // Unpause
+    await requestAndSignOperation(1, ethers.ZeroAddress, 0, "0x"); // Unpause
     await liberdus.connect(recipient).transfer(owner.address, bridgeInAmount);
     expect(await liberdus.balanceOf(owner.address)).to.equal(bridgeInAmount);
   });
 
   it("Should require three signatures for multisig operations", async function () {
-    const tx = await liberdus.requestOperation(3, bridgeInCaller.address, 0, "0x");
+    const tx = await liberdus.requestOperation(2, bridgeInCaller.address, 0, "0x");
     const receipt = await tx.wait();
     const operationRequestedEvent = receipt.logs.find(log => log.fragment.name === 'OperationRequested');
     const operationId = operationRequestedEvent.args.operationId;
@@ -189,7 +168,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
     const oldSigner = signer3;
 
     // Prepare operation
-    const tx = await liberdus.requestOperation(5, oldSigner.address, BigInt(newSigner.address), "0x");
+    const tx = await liberdus.requestOperation(4, oldSigner.address, BigInt(newSigner.address), "0x");
     const receipt = await tx.wait();
     const operationId = receipt.logs.find(log => log.fragment.name === 'OperationRequested').args.operationId;
 
@@ -204,7 +183,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
     expect(await liberdus.isSigner(oldSigner.address)).to.be.false;
 
     // Ensure oldSigner cannot sign anymore
-    const tx2 = await liberdus.requestOperation(3, bridgeInCaller.address, 0, "0x");
+    const tx2 = await liberdus.requestOperation(2, bridgeInCaller.address, 0, "0x");
     const receipt2 = await tx2.wait();
     const opId2 = receipt2.logs.find(log => log.fragment.name === 'OperationRequested').args.operationId;
     const sig = await oldSigner.signMessage(ethers.getBytes(await liberdus.getOperationHash(opId2)));
@@ -214,7 +193,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should include chainId in operation hash", async function () {
-    const operationType = 3;
+    const operationType = 2;
     const target = bridgeInCaller.address;
     const value = 0;
     const data = "0x";
@@ -239,7 +218,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should enforce 3-day operation deadline", async function () {
-    const tx = await liberdus.requestOperation(3, bridgeInCaller.address, 0, "0x");
+    const tx = await liberdus.requestOperation(2, bridgeInCaller.address, 0, "0x");
     const receipt = await tx.wait();
     const operationId = receipt.logs.find(log => log.fragment.name === 'OperationRequested').args.operationId;
 
@@ -255,8 +234,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should allow transfer and transferFrom when not paused", async function () {
-    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // PostLaunch
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
     const bridgeInAmount = ethers.parseUnits("1000", 18);
     await liberdus.connect(bridgeInCaller)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, ethers.id("testTxId"), sourceChainId);
 
@@ -266,8 +244,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   });
 
   it("Should allow bridgeOut and bridgeIn without optional chainId params", async function () {
-    await requestAndSignOperation(0, ethers.ZeroAddress, 0, "0x"); // PostLaunch
-    await requestAndSignOperation(3, bridgeInCaller.address, 0, "0x");
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
 
     // Bridge in without sourceChainId
     const bridgeInAmount = ethers.parseUnits("1000", 18);
