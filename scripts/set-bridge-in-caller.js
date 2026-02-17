@@ -5,22 +5,25 @@ async function main() {
   const [deployer, signer1, signer2, signer3] = await hre.ethers.getSigners();
 
   // --- CONFIGURATION ---
-  const LIBERDUS_ADDR = process.env.LIBERDUS_TOKEN_ADDRESS || "0xdEA158C0b7d776E432881fD416e0dB982A215745";
-  const LIBERDUS_SEC_ADDR = process.env.LIBERDUS_SECONDARY_ADDRESS || "0x94DDF8bb01Ce5EA0eE471e5FB51A7baE46032C90";
+  const LIBERDUS_ADDR = process.env.LIBERDUS_TOKEN_ADDRESS;
+  const LIBERDUS_SEC_ADDR = process.env.LIBERDUS_SECONDARY_ADDRESS;
+  const VAULT_ADDR = process.env.VAULT_ADDRESS;
 
   const CHAIN_ID_PRIMARY = 31337;
   const CHAIN_ID_SECONDARY = 31338;
 
   // Addresses to set as bridgeIn caller on each contract
-  const BRIDGE_IN_CALLER_PRIMARY = process.env.BRIDGE_IN_CALLER_PRIMARY || "0xcd9511690e5d15575Fb033d17b6f6B021DF22600";
-  const BRIDGE_IN_CALLER_SECONDARY = process.env.BRIDGE_IN_CALLER_SECONDARY || "0x79D6Bb4e74CE0e0DbD82B44d491aE207Ff247dD4";
+  const BRIDGE_IN_CALLER_PRIMARY = process.env.BRIDGE_IN_CALLER_PRIMARY;
+  const BRIDGE_IN_CALLER_SECONDARY = process.env.BRIDGE_IN_CALLER_SECONDARY;
+  const BRIDGE_IN_CALLER_VAULT = process.env.BRIDGE_IN_CALLER_VAULT || BRIDGE_IN_CALLER_PRIMARY;
 
   // Comma-separated recipient addresses for token and ETH transfers
   // Bridge callers are included automatically and deduplicated
   const RECIPIENTS = [...new Set([
     ...(BRIDGE_IN_CALLER_PRIMARY && ethers.isAddress(BRIDGE_IN_CALLER_PRIMARY) ? [BRIDGE_IN_CALLER_PRIMARY] : []),
     ...(BRIDGE_IN_CALLER_SECONDARY && ethers.isAddress(BRIDGE_IN_CALLER_SECONDARY) ? [BRIDGE_IN_CALLER_SECONDARY] : []),
-    ...(process.env.RECIPIENTS || "")
+    ...(BRIDGE_IN_CALLER_VAULT && ethers.isAddress(BRIDGE_IN_CALLER_VAULT) ? [BRIDGE_IN_CALLER_VAULT] : []),
+    ...(process.env.RECIPIENTS || signer1.address + "," + signer2.address + "," + signer3.address)
       .split(",")
       .map((a) => a.trim())
       .filter((a) => a && ethers.isAddress(a)),
@@ -59,10 +62,32 @@ async function main() {
 
   const LiberdusSecondary = await ethers.getContractFactory("LiberdusSecondary");
   const liberdusSecondary = LiberdusSecondary.attach(LIBERDUS_SEC_ADDR);
+  let vault = null;
+  if (VAULT_ADDR && ethers.isAddress(VAULT_ADDR)) {
+    const Vault = await ethers.getContractFactory("Vault");
+    vault = Vault.attach(VAULT_ADDR);
+  }
 
   console.log("Deployer:", deployer.address);
   console.log("Primary contract:", LIBERDUS_ADDR);
   console.log("Secondary contract:", LIBERDUS_SEC_ADDR);
+  if (vault) {
+    console.log("Vault contract:", VAULT_ADDR);
+  }
+
+  // Validate that addresses map to expected interfaces to avoid silent misconfiguration.
+  try {
+    await liberdusSecondary.symbol();
+  } catch (error) {
+    throw new Error(`LIBERDUS_SECONDARY_ADDRESS is not a LiberdusSecondary/ERC20 contract: ${LIBERDUS_SEC_ADDR}`);
+  }
+  if (vault) {
+    try {
+      await vault.token();
+    } catch (error) {
+      throw new Error(`VAULT_ADDRESS is not a Vault contract: ${VAULT_ADDR}`);
+    }
+  }
 
   // ====================================================
   // 1. ETH TRANSFERS
@@ -102,11 +127,29 @@ async function main() {
       console.log(`Secondary BridgeInCaller already set to ${BRIDGE_IN_CALLER_SECONDARY}, skipping.`);
     } else {
       console.log(`--- Setting BridgeInCaller on Secondary to ${BRIDGE_IN_CALLER_SECONDARY} ---`);
-      await requestAndSignOperation(liberdusSecondary, 3, BRIDGE_IN_CALLER_SECONDARY, 0, "0x");
+      await requestAndSignOperation(liberdusSecondary, 2, BRIDGE_IN_CALLER_SECONDARY, 0, "0x");
       console.log("  Done.");
     }
   } else if (BRIDGE_IN_CALLER_SECONDARY) {
     console.log(`\nWarning: Invalid BRIDGE_IN_CALLER_SECONDARY address: ${BRIDGE_IN_CALLER_SECONDARY}`);
+  }
+
+  // Vault: OpType 2 = SetBridgeInCaller
+  if (!VAULT_ADDR) {
+    console.log("\nVault address not provided (VAULT_ADDRESS). Skipping Vault BridgeInCaller setup.");
+  } else if (!vault) {
+    console.log(`\nWarning: Invalid VAULT_ADDRESS: ${VAULT_ADDR}`);
+  } else if (BRIDGE_IN_CALLER_VAULT && ethers.isAddress(BRIDGE_IN_CALLER_VAULT)) {
+    const currentVaultCaller = await vault.bridgeInCaller();
+    if (currentVaultCaller.toLowerCase() === BRIDGE_IN_CALLER_VAULT.toLowerCase()) {
+      console.log(`Vault BridgeInCaller already set to ${BRIDGE_IN_CALLER_VAULT}, skipping.`);
+    } else {
+      console.log(`--- Setting BridgeInCaller on Vault to ${BRIDGE_IN_CALLER_VAULT} ---`);
+      await requestAndSignOperation(vault, 2, BRIDGE_IN_CALLER_VAULT, 0, "0x");
+      console.log("  Done.");
+    }
+  } else if (BRIDGE_IN_CALLER_VAULT) {
+    console.log(`\nWarning: Invalid BRIDGE_IN_CALLER_VAULT address: ${BRIDGE_IN_CALLER_VAULT}`);
   }
 
   // ====================================================

@@ -71,7 +71,16 @@ async function main() {
   console.log(`Liberdus deployed to: ${await liberdus.getAddress()}`);
 
   // ====================================================
-  // 2. DEPLOY LIBERDUS SECONDARY (SECONDARY)
+  // 2. DEPLOY VAULT (PRIMARY CHAIN LOCKER)
+  // ====================================================
+  console.log("\n--- Deploying Vault (Primary Chain: 31337) ---");
+  const Vault = await hre.ethers.getContractFactory("Vault");
+  const vault = await Vault.deploy(await liberdus.getAddress(), signerAddresses, CHAIN_ID_PRIMARY);
+  await vault.waitForDeployment();
+  console.log(`Vault deployed to: ${await vault.getAddress()}`);
+
+  // ====================================================
+  // 3. DEPLOY LIBERDUS SECONDARY (SECONDARY)
   // ====================================================
   console.log("\n--- Deploying LiberdusSecondary (Secondary Chain: 31338) ---");
   const LiberdusSecondaryToken = await hre.ethers.getContractFactory("LiberdusSecondary");
@@ -81,7 +90,7 @@ async function main() {
 
 
   // ====================================================
-  // 3. SETUP PRIMARY CHAIN
+  // 4. SETUP PRIMARY CHAIN (PRE-LAUNCH)
   // ====================================================
   console.log("\n--- Setting up Liberdus (Primary) ---");
 
@@ -94,37 +103,47 @@ async function main() {
   const distributionAmount = ethers.parseUnits("500000", 18);
   await requestAndSignOperation(liberdus, 8, deployer.address, distributionAmount, "0x");
 
-  // PostLaunch (OpType 2)
-  console.log("Switching to PostLaunch...");
-  await requestAndSignOperation(liberdus, 2, ZeroAddress, 0, "0x");
-
   // Set BridgeInCaller (OpType 5) - allowing deployer to act as bridge for testing
   console.log("Setting BridgeInCaller to deployer...");
   await requestAndSignOperation(liberdus, 5, deployer.address, 0, "0x");
 
 
   // ====================================================
-  // 4. SETUP SECONDARY CHAIN
+  // 5. SETUP VAULT + SECONDARY CHAIN
   // ====================================================
-  console.log("\n--- Setting up LiberdusSecondary (Secondary) ---");
+  console.log("\n--- Setting up Vault + LiberdusSecondary ---");
+
+  // Set Vault BridgeInCaller (OpType 2)
+  console.log("Setting Vault BridgeInCaller to deployer...");
+  await requestAndSignOperation(vault, 2, deployer.address, 0, "0x");
 
   // Set BridgeInCaller (OpType 2) - allowing deployer to act as bridge
-  console.log("Setting BridgeInCaller to deployer...");
+  console.log("Setting Secondary BridgeInCaller to deployer...");
   await requestAndSignOperation(liberdusSecondary, 2, deployer.address, 0, "0x");
 
 
   // ====================================================
-  // 5. INTERACTION: BRIDGE OUT (Primary -> Secondary)
+  // 6. INTERACTION: BRIDGE OUT (Vault/Primary -> Secondary)
   // ====================================================
-  console.log("\n--- Interaction: Bridge Out (Primary -> Secondary) ---");
+  console.log("\n--- Interaction: Bridge Out (Vault/Primary -> Secondary) ---");
   const bridgeAmount = ethers.parseUnits("10000", 18);
 
-  console.log(`Bridging out ${ethers.formatUnits(bridgeAmount, 18)} LIB from Primary...`);
-  // Liberdus bridgeOut(amount, target, chainId)
-  const txOut1 = await liberdus.connect(deployer).bridgeOut(bridgeAmount, deployer.address, CHAIN_ID_PRIMARY);
+  console.log(`Approving Vault for ${ethers.formatUnits(bridgeAmount, 18)} LIB on Primary...`);
+  await liberdus.connect(deployer).approve(await vault.getAddress(), bridgeAmount);
+
+  console.log(`Bridging out ${ethers.formatUnits(bridgeAmount, 18)} LIB via Vault...`);
+  const txOut1 = await vault
+    .connect(deployer)
+    ["bridgeOut(uint256,address,uint256,uint256)"](
+      bridgeAmount,
+      deployer.address,
+      CHAIN_ID_PRIMARY,
+      CHAIN_ID_SECONDARY
+    );
   await txOut1.wait();
 
   console.log("Primary Balance:", ethers.formatUnits(await liberdus.balanceOf(deployer.address), 18));
+  console.log("Vault Balance:", ethers.formatUnits(await vault.getVaultBalance(), 18));
 
   // Simulate Relayer: Bridge In on Secondary
   console.log(`Bridging in ${ethers.formatUnits(bridgeAmount, 18)} LIB to Secondary...`);
@@ -148,9 +167,9 @@ async function main() {
 
 
   // ====================================================
-  // 6. INTERACTION: BRIDGE BACK (Secondary -> Primary)
+  // 7. INTERACTION: BRIDGE BACK (Secondary -> Vault/Primary)
   // ====================================================
-  console.log("\n--- Interaction: Bridge Back (Secondary -> Primary) ---");
+  console.log("\n--- Interaction: Bridge Back (Secondary -> Vault/Primary) ---");
   const returnAmount = ethers.parseUnits("200", 18);
 
   console.log(`Bridging out ${ethers.formatUnits(returnAmount, 18)} LIB from Secondary...`);
@@ -166,14 +185,40 @@ async function main() {
 
   console.log("Secondary Balance:", ethers.formatUnits(await liberdusSecondary.balanceOf(deployer.address), 18));
 
-  // Simulate Relayer: Bridge In on Primary
-  console.log(`Bridging in ${ethers.formatUnits(returnAmount, 18)} LIB to Primary...`);
-  // Liberdus bridgeIn(to, amount, chainId, txId)
-  await liberdus
+  // Simulate Relayer: Bridge In on Vault/Primary
+  console.log(`Bridging in ${ethers.formatUnits(returnAmount, 18)} LIB from Vault to Primary account...`);
+  await vault
     .connect(deployer)
-    .bridgeIn(deployer.address, returnAmount, CHAIN_ID_PRIMARY, ethers.id("tx2"));
+  ["bridgeIn(address,uint256,uint256,bytes32,uint256)"](
+    deployer.address,
+    returnAmount,
+    CHAIN_ID_PRIMARY,
+    ethers.id("tx2"),
+    CHAIN_ID_SECONDARY
+  );
 
   console.log("Primary Balance:", ethers.formatUnits(await liberdus.balanceOf(deployer.address), 18));
+
+  // ====================================================
+  // 8. SWITCH PRIMARY TO POST-LAUNCH, THEN TEST PRIMARY BRIDGE
+  // ====================================================
+  console.log("\n--- Switching Primary to PostLaunch ---");
+  await requestAndSignOperation(liberdus, 2, ZeroAddress, 0, "0x");
+
+  console.log("\n--- Interaction: Test Primary bridgeOut + bridgeIn ---");
+  const primaryBridgeAmount = ethers.parseUnits("50", 18);
+  await liberdus
+    .connect(deployer)
+    .bridgeOut(primaryBridgeAmount, deployer.address, CHAIN_ID_PRIMARY);
+  await liberdus
+    .connect(deployer)
+    .bridgeIn(deployer.address, primaryBridgeAmount, CHAIN_ID_PRIMARY, ethers.id("tx-primary-1"));
+  console.log("Primary Balance After Primary Bridge Test:", ethers.formatUnits(await liberdus.balanceOf(deployer.address), 18));
+
+  console.log("\n--- Deployment Summary ---");
+  console.log(`LIBERDUS_TOKEN_ADDRESS=${await liberdus.getAddress()}`);
+  console.log(`VAULT_ADDRESS=${await vault.getAddress()}`);
+  console.log(`LIBERDUS_SECONDARY_ADDRESS=${await liberdusSecondary.getAddress()}`);
   console.log("\n--- DONE ---");
 }
 

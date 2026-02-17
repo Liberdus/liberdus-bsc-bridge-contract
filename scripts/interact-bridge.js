@@ -5,18 +5,24 @@ async function main() {
   const [deployer, signer1, signer2, signer3] = await hre.ethers.getSigners();
 
   // --- CONFIGURATION ---
-  // Update these addresses if they change in future deployments
-  const LIBERDUS_ADDR = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
-  const LIBERDUS_SEC_ADDR = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512";
+  const LIBERDUS_ADDR = process.env.LIBERDUS_TOKEN_ADDRESS || "";
+  const LIBERDUS_SEC_ADDR = process.env.LIBERDUS_SECONDARY_ADDRESS || "";
+  const VAULT_ADDR = process.env.VAULT_ADDRESS || "";
+
+  if (!LIBERDUS_ADDR || !LIBERDUS_SEC_ADDR || !VAULT_ADDR) {
+    throw new Error("Set LIBERDUS_TOKEN_ADDRESS, LIBERDUS_SECONDARY_ADDRESS, and VAULT_ADDRESS in .env");
+  }
 
   const CHAIN_ID_PRIMARY = 31337;
   const CHAIN_ID_SECONDARY = 31338;
+
   const balanceOnly = process.env.BALANCE_ONLY === "true" || process.env.BALANCE_ONLY === "1";
 
   console.log("Interacting with contracts...");
   console.log("Deployer:", deployer.address);
   console.log("Signer 1:", signer1.address);
   console.log("Signer 2:", signer2.address);
+  console.log("Signer 3:", signer3.address);
 
   // Attach to contracts
   const Liberdus = await ethers.getContractFactory("Liberdus");
@@ -24,6 +30,9 @@ async function main() {
 
   const LiberdusSecondary = await ethers.getContractFactory("LiberdusSecondary");
   const liberdusSecondary = LiberdusSecondary.attach(LIBERDUS_SEC_ADDR);
+
+  const Vault = await ethers.getContractFactory("Vault");
+  const vault = Vault.attach(VAULT_ADDR);
 
   // ====================================================
   // TOKEN & ETH BALANCE CHECK
@@ -44,6 +53,7 @@ async function main() {
     console.log(`  Secondary: ${ethers.formatUnits(secondaryBal, 18)} LIB`);
     console.log(`  ETH:       ${ethers.formatUnits(ethBal, "ether")} ETH`);
   }
+  console.log(`Vault Locked Balance: ${ethers.formatUnits(await vault.getVaultBalance(), 18)} LIB`);
 
   if (balanceOnly) {
     console.log("\n--- Balance check complete ---");
@@ -51,72 +61,73 @@ async function main() {
   }
 
   // ====================================================
-  // 1. PRIMARY CHAIN ACTIVITY
+  // 1. PRIMARY -> SECONDARY (via Vault)
   // ====================================================
-  console.log("\n--- Primary Chain (Liberdus) Activities ---");
+  console.log("\n--- Primary -> Secondary via Vault ---");
+  const bridgeOutAmount = ethers.parseUnits(process.env.BRIDGE_OUT_AMOUNT || "5", 18);
 
-  // Check deployer balance
-  const deployerBalPrimary = await liberdus.balanceOf(deployer.address);
-  console.log(`Deployer Balance: ${ethers.formatUnits(deployerBalPrimary, 18)} LIB`);
+  const signer1PrimaryBal = await liberdus.balanceOf(signer1.address);
+  console.log(`Signer 1 Primary Balance: ${ethers.formatUnits(signer1PrimaryBal, 18)} LIB`);
+  if (signer1PrimaryBal >= bridgeOutAmount) {
+    const approveTx = await liberdus.connect(signer1).approve(VAULT_ADDR, bridgeOutAmount);
+    await approveTx.wait();
 
-  if (deployerBalPrimary > 0n) {
-    // Transfer tokens to Signer 1
-    // const transferAmount = ethers.parseUnits("1000", 18);
-    // console.log(`Transferring ${ethers.formatUnits(transferAmount, 18)} LIB to Signer 1...`);
-    // await liberdus.connect(deployer).transfer(signer1.address, transferAmount);
-
-    // Signer 1 Bridges Out
-    console.log("Signer 1 bridging out to Secondary...");
-    const bridgeAmount = ethers.parseUnits("5", 18);
-
-    // bridgeOut(amount, target, chainId)
-    const tx = await liberdus.connect(signer1).bridgeOut(bridgeAmount, signer1.address, CHAIN_ID_PRIMARY);
+    const tx = await vault
+      .connect(signer1)
+      ["bridgeOut(uint256,address,uint256,uint256)"](
+        bridgeOutAmount,
+        signer1.address,
+        CHAIN_ID_PRIMARY,
+        CHAIN_ID_SECONDARY
+      );
     await tx.wait();
-    console.log("Signer 1 bridge out successful.");
-    console.log(`Signer 1 Remaining Balance: ${ethers.formatUnits(await liberdus.balanceOf(signer1.address), 18)} LIB`);
+    console.log("Signer 1 vault bridgeOut successful.");
+    console.log(`Signer 1 Primary Remaining: ${ethers.formatUnits(await liberdus.balanceOf(signer1.address), 18)} LIB`);
+    console.log(`Vault Locked Balance: ${ethers.formatUnits(await vault.getVaultBalance(), 18)} LIB`);
   } else {
-    console.log("Skipping Primary activities: Deployer has no balance.");
+    console.log(`Skipping Primary->Secondary: signer1 needs at least ${ethers.formatUnits(bridgeOutAmount, 18)} LIB.`);
   }
 
-  // console.log("\n--- DONE ---");
-  // process.exit(0);
-
-
-
   // ====================================================
-  // 2. SECONDARY CHAIN ACTIVITY
+  // 2. SECONDARY -> PRIMARY (unlock from Vault)
   // ====================================================
-  console.log("\n--- Secondary Chain (LiberdusSecondary) Activities ---");
+  console.log("\n--- Secondary -> Primary via Vault ---");
+  const bridgeBackAmount = ethers.parseUnits(process.env.BRIDGE_BACK_AMOUNT || "1", 18);
+  const signer2SecondaryBal = await liberdusSecondary.balanceOf(signer2.address);
+  console.log(`Signer 2 Secondary Balance: ${ethers.formatUnits(signer2SecondaryBal, 18)} LIB`);
 
-  // Check deployer balance on Secondary (assuming simulated environment or previous bridge-in)
-  const deployerBalSecondary = await liberdusSecondary.balanceOf(deployer.address);
-  console.log(`Deployer Balance: ${ethers.formatUnits(deployerBalSecondary, 18)} LIB`);
-
-  if (deployerBalSecondary > 0n) {
-    // Transfer tokens to Signer 2
-    // const transferAmount = ethers.parseUnits("50", 18);
-    // console.log(`Transferring ${ethers.formatUnits(transferAmount, 18)} LIB to Signer 2...`);
-    // await liberdusSecondary.connect(deployer).transfer(signer2.address, transferAmount);
-
-    // Signer 2 Bridges Out back to Primary
-    console.log("Signer 2 bridging out to Primary...");
-    const bridgeAmount = ethers.parseUnits("1", 18);
-
-    // LiberdusSecondary bridgeOut(amount, target, chainId, destinationChainId)
-    // Using the 4-argument overload
-    const tx = await liberdusSecondary
+  if (signer2SecondaryBal >= bridgeBackAmount) {
+    const outTx = await liberdusSecondary
       .connect(signer2)
-    ["bridgeOut(uint256,address,uint256,uint256)"](
-      bridgeAmount,
-      signer2.address,
-      CHAIN_ID_SECONDARY,
-      CHAIN_ID_PRIMARY
-    );
-    await tx.wait();
-    console.log("Signer 2 bridge out successful.");
-    console.log(`Signer 2 Remaining Balance: ${ethers.formatUnits(await liberdusSecondary.balanceOf(signer2.address), 18)} LIB`);
+      ["bridgeOut(uint256,address,uint256,uint256)"](
+        bridgeBackAmount,
+        signer2.address,
+        CHAIN_ID_SECONDARY,
+        CHAIN_ID_PRIMARY
+      );
+    await outTx.wait();
+    console.log("Signer 2 secondary bridgeOut successful.");
+
+    const bridgeInCaller = await vault.bridgeInCaller();
+    if (bridgeInCaller.toLowerCase() !== deployer.address.toLowerCase()) {
+      console.log(`Skipping vault bridgeIn: deployer is not bridgeInCaller (${bridgeInCaller}).`);
+    } else {
+      const inTx = await vault
+        .connect(deployer)
+        ["bridgeIn(address,uint256,uint256,bytes32,uint256)"](
+          signer2.address,
+          bridgeBackAmount,
+          CHAIN_ID_PRIMARY,
+          ethers.id(`interact-bridge-${Date.now()}`),
+          CHAIN_ID_SECONDARY
+        );
+      await inTx.wait();
+      console.log("Vault bridgeIn to signer2 successful.");
+      console.log(`Signer 2 Primary Balance: ${ethers.formatUnits(await liberdus.balanceOf(signer2.address), 18)} LIB`);
+      console.log(`Vault Locked Balance: ${ethers.formatUnits(await vault.getVaultBalance(), 18)} LIB`);
+    }
   } else {
-    console.log("Skipping Secondary activities: Deployer has no balance (did you run the deploy script with bridge-in enabled?).");
+    console.log(`Skipping Secondary->Primary: signer2 needs at least ${ethers.formatUnits(bridgeBackAmount, 18)} LIB.`);
   }
 
   console.log("\n--- Interaction Complete ---");

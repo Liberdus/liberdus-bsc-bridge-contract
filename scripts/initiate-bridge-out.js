@@ -2,25 +2,36 @@ const hre = require("hardhat");
 const { ethers } = hre;
 
 async function main() {
-  const CONTRACT_TYPE = process.env.CONTRACT_TYPE || "SECONDARY";
+  const CONTRACT_TYPE = (process.env.CONTRACT_TYPE || "SECONDARY").toUpperCase();
   let CONTRACT_ADDRESS;
   let CONTRACT_NAME;
 
   if (CONTRACT_TYPE === "PRIMARY") {
     CONTRACT_ADDRESS = process.env.LIBERDUS_TOKEN_ADDRESS;
     CONTRACT_NAME = "Liberdus";
+  } else if (CONTRACT_TYPE === "VAULT") {
+    CONTRACT_ADDRESS = process.env.VAULT_ADDRESS;
+    CONTRACT_NAME = "Vault";
   } else {
     CONTRACT_ADDRESS = process.env.LIBERDUS_SECONDARY_ADDRESS;
     CONTRACT_NAME = "LiberdusSecondary";
   }
 
   if (!CONTRACT_ADDRESS) {
-    throw new Error(`Set ${CONTRACT_TYPE === "PRIMARY" ? "LIBERDUS_TOKEN_ADDRESS" : "LIBERDUS_SECONDARY_ADDRESS"} in your .env file`);
+    if (CONTRACT_TYPE === "PRIMARY") {
+      throw new Error("Set LIBERDUS_TOKEN_ADDRESS in your .env file");
+    }
+    if (CONTRACT_TYPE === "VAULT") {
+      throw new Error("Set VAULT_ADDRESS in your .env file");
+    }
+    throw new Error("Set LIBERDUS_SECONDARY_ADDRESS in your .env file");
   }
 
   const [deployer] = await hre.ethers.getSigners();
   const chainId = (await hre.ethers.provider.getNetwork()).chainId;
-  const destinationChainId = process.env.DESTINATION_CHAIN_ID || 0;
+  const destinationChainId = BigInt(process.env.DESTINATION_CHAIN_ID || 0);
+  const amount = ethers.parseUnits(process.env.AMOUNT_LIB || "100", 18);
+  const targetAddress = process.env.TARGET_ADDRESS || deployer.address;
 
   console.log("Using account:", deployer.address);
   console.log("Chain ID:", Number(chainId));
@@ -39,34 +50,54 @@ async function main() {
     }
   }
 
-  // Bridge out tokens
-  const amount = ethers.parseUnits("100", 18); // Bridging out 100 tokens
-  const targetAddress = deployer.address; // Sending to self on the other chain
+  let tokenContract = null;
+  let balance;
+  if (CONTRACT_TYPE === "VAULT") {
+    const tokenAddress = await contract.token();
+    tokenContract = new ethers.Contract(
+      tokenAddress,
+      [
+        "function balanceOf(address) view returns (uint256)",
+        "function allowance(address,address) view returns (uint256)",
+        "function approve(address,uint256) returns (bool)",
+      ],
+      deployer
+    );
+    balance = await tokenContract.balanceOf(deployer.address);
+    console.log("Token Address:", tokenAddress);
+  } else {
+    balance = await contract.balanceOf(deployer.address);
+  }
 
-  // Check balance first
-  const balance = await contract.balanceOf(deployer.address);
   console.log("Current Balance:", ethers.formatUnits(balance, 18), "LIB");
-
   if (balance < amount) {
-      throw new Error(`Insufficient balance to bridge out. Have ${ethers.formatUnits(balance, 18)}, need ${ethers.formatUnits(amount, 18)}`);
+    throw new Error(`Insufficient balance to bridge out. Have ${ethers.formatUnits(balance, 18)}, need ${ethers.formatUnits(amount, 18)}`);
   }
 
   console.log(`\nBridging out ${ethers.formatUnits(amount, 18)} LIB to ${targetAddress} on destination chain...`);
   
   let tx;
-  if (CONTRACT_TYPE === "SECONDARY") {
-      console.log("Calling bridgeOut with destinationChainId:", destinationChainId);
-      // bridgeOut(uint256 amount, address targetAddress, uint256 _chainId, uint256 destinationChainId)
-      tx = await contract["bridgeOut(uint256,address,uint256,uint256)"](amount, targetAddress, chainId, destinationChainId);
+  if (CONTRACT_TYPE === "PRIMARY") {
+    tx = await contract.bridgeOut(amount, targetAddress, chainId);
   } else {
-      // Primary contract: bridgeOut(uint256 amount, address targetAddress, uint256 _chainId)
-      tx = await contract.bridgeOut(amount, targetAddress, chainId);
+    if (CONTRACT_TYPE === "VAULT") {
+      const allowance = await tokenContract.allowance(deployer.address, CONTRACT_ADDRESS);
+      if (allowance < amount) {
+        console.log(`Approving Vault for ${ethers.formatUnits(amount, 18)} LIB...`);
+        const approveTx = await tokenContract.approve(CONTRACT_ADDRESS, amount);
+        await approveTx.wait();
+      }
+    }
+    console.log("Calling bridgeOut with destinationChainId:", destinationChainId.toString());
+    tx = await contract["bridgeOut(uint256,address,uint256,uint256)"](amount, targetAddress, chainId, destinationChainId);
   }
 
   const receipt = await tx.wait();
   console.log("Transaction hash:", receipt.hash);
 
-  const newBalance = await contract.balanceOf(deployer.address);
+  const newBalance = CONTRACT_TYPE === "VAULT"
+    ? await tokenContract.balanceOf(deployer.address)
+    : await contract.balanceOf(deployer.address);
   console.log("New Balance:", ethers.formatUnits(newBalance, 18), "LIB");
 }
 

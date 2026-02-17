@@ -2,25 +2,37 @@ const hre = require("hardhat");
 const { ethers } = hre;
 
 async function main() {
-  const CONTRACT_TYPE = process.env.CONTRACT_TYPE || "SECONDARY";
+  const CONTRACT_TYPE = (process.env.CONTRACT_TYPE || "SECONDARY").toUpperCase();
   let CONTRACT_ADDRESS;
   let CONTRACT_NAME;
 
   if (CONTRACT_TYPE === "PRIMARY") {
     CONTRACT_ADDRESS = process.env.LIBERDUS_TOKEN_ADDRESS;
     CONTRACT_NAME = "Liberdus";
+  } else if (CONTRACT_TYPE === "VAULT") {
+    CONTRACT_ADDRESS = process.env.VAULT_ADDRESS;
+    CONTRACT_NAME = "Vault";
   } else {
     CONTRACT_ADDRESS = process.env.LIBERDUS_SECONDARY_ADDRESS;
     CONTRACT_NAME = "LiberdusSecondary";
   }
 
   if (!CONTRACT_ADDRESS) {
-    throw new Error(`Set ${CONTRACT_TYPE === "PRIMARY" ? "LIBERDUS_TOKEN_ADDRESS" : "LIBERDUS_SECONDARY_ADDRESS"} in your .env file`);
+    if (CONTRACT_TYPE === "PRIMARY") {
+      throw new Error("Set LIBERDUS_TOKEN_ADDRESS in your .env file");
+    }
+    if (CONTRACT_TYPE === "VAULT") {
+      throw new Error("Set VAULT_ADDRESS in your .env file");
+    }
+    throw new Error("Set LIBERDUS_SECONDARY_ADDRESS in your .env file");
   }
 
   const [deployer] = await hre.ethers.getSigners();
   const chainId = (await hre.ethers.provider.getNetwork()).chainId;
-  const sourceChainId = process.env.SOURCE_CHAIN_ID || 0;
+  const sourceChainId = BigInt(process.env.SOURCE_CHAIN_ID || 0);
+  const amount = ethers.parseUnits(process.env.AMOUNT_LIB || "10000", 18);
+  const recipient = process.env.TARGET_ADDRESS || deployer.address;
+  const txId = process.env.TX_ID || "testnet-bridge-in-1";
 
   console.log("Using account:", deployer.address);
   console.log("Chain ID:", chainId);
@@ -45,26 +57,37 @@ async function main() {
     throw new Error(`Deployer is not the bridgeInCaller. Expected ${deployer.address}, got ${bridgeInCaller}`);
   }
 
-  // Bridge in tokens
-  const amount = ethers.parseUnits("10000", 18);
-  const txId = ethers.id("testnet-bridge-in-1");
-
-  console.log(`\nBridging in ${ethers.formatUnits(amount, 18)} LIB to ${deployer.address}...`);
+  console.log(`\nBridging in ${ethers.formatUnits(amount, 18)} LIB to ${recipient}...`);
   
   let tx;
-  if (CONTRACT_TYPE === "SECONDARY") {
-      console.log("Calling bridgeIn with sourceChainId:", sourceChainId);
-      // bridgeIn(address to, uint256 amount, uint256 _chainId, bytes32 txId, uint256 sourceChainId)
-      tx = await contract["bridgeIn(address,uint256,uint256,bytes32,uint256)"](deployer.address, amount, chainId, txId, sourceChainId);
+  if (CONTRACT_TYPE === "PRIMARY") {
+      tx = await contract.bridgeIn(recipient, amount, chainId, ethers.id(txId));
   } else {
-      // Primary contract only has: bridgeIn(address to, uint256 amount, uint256 _chainId, bytes32 txId)
-      tx = await contract.bridgeIn(deployer.address, amount, chainId, txId);
+      console.log("Calling bridgeIn with sourceChainId:", sourceChainId.toString());
+      tx = await contract["bridgeIn(address,uint256,uint256,bytes32,uint256)"](
+        recipient,
+        amount,
+        chainId,
+        ethers.id(txId),
+        sourceChainId
+      );
   }
 
   const receipt = await tx.wait();
   console.log("Transaction hash:", receipt.hash);
 
-  const balance = await contract.balanceOf(deployer.address);
+  let balance;
+  if (CONTRACT_TYPE === "VAULT") {
+    const tokenAddress = await contract.token();
+    const tokenContract = new ethers.Contract(
+      tokenAddress,
+      ["function balanceOf(address) view returns (uint256)"],
+      deployer
+    );
+    balance = await tokenContract.balanceOf(recipient);
+  } else {
+    balance = await contract.balanceOf(recipient);
+  }
   console.log("Balance:", ethers.formatUnits(balance, 18), "LIB");
 }
 
