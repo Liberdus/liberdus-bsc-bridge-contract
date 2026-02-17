@@ -311,6 +311,7 @@ contract Vault is Pausable, ReentrancyGuard, Ownable {
             require(destinationChainId != _chainId, "Destination chain must differ from source chain");
         }
         require(amount > 0, "Cannot bridge out zero tokens");
+        require(amount <= maxBridgeInAmount, "Amount exceeds bridge-in limit");
         require(targetAddress != address(0), "Invalid target address");
         require(amount <= token.balanceOf(msg.sender), "Insufficient balance");
 

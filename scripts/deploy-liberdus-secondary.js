@@ -34,7 +34,6 @@ async function main() {
   signerAddresses.forEach((signer, index) => {
     console.log(`  Signer ${index + 1}:`, signer);
   });
-  console.log("BridgeInCaller set to signer 1:", signerAddresses[0]);
 
   // Wait for block confirmations then verify
   console.log("Waiting for block confirmations...");

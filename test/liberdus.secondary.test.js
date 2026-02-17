@@ -125,6 +125,32 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
     ).to.be.revertedWith("Bridge-in cooldown not met");
   });
 
+  it("Should reject bridgeOut amounts above maxBridgeInAmount", async function () {
+    await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
+
+    const bridgedAmount = ethers.parseUnits("1000", 18);
+    await liberdus.connect(bridgeInCaller)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](
+      recipient.address,
+      bridgedAmount,
+      chainId,
+      ethers.id("testTxId"),
+      sourceChainId
+    );
+
+    const reducedMaxAmount = ethers.parseUnits("500", 18);
+    const cooldownData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [BigInt(60)]);
+    await requestAndSignOperation(3, ethers.ZeroAddress, reducedMaxAmount, cooldownData);
+
+    await expect(
+      liberdus.connect(recipient)["bridgeOut(uint256,address,uint256,uint256)"](
+        bridgedAmount,
+        owner.address,
+        chainId,
+        destinationChainId
+      )
+    ).to.be.revertedWith("Amount exceeds bridge-in limit");
+  });
+
   it("Should pause and unpause via multisig", async function () {
     await requestAndSignOperation(2, bridgeInCaller.address, 0, "0x");
     const bridgeInAmount = ethers.parseUnits("1000", 18);

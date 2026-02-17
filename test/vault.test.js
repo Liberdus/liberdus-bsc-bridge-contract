@@ -126,12 +126,29 @@ describe("Vault", function () {
     });
 
     it("Should reject bridging out with insufficient balance", async function () {
+      const elevatedLimit = ethers.parseUnits("300000", 18);
+      const cooldownData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [BigInt(60)]);
+      await requestAndSignOperation(vault, 3, ethers.ZeroAddress, elevatedLimit, cooldownData);
+
       const tooMuch = ethers.parseUnits("200000", 18); // More than the 100k minted
       await liberdus.connect(owner).approve(await vault.getAddress(), tooMuch);
 
       await expect(
         vault.connect(owner)["bridgeOut(uint256,address,uint256,uint256)"](tooMuch, recipient.address, chainId, destinationChainId)
       ).to.be.revertedWith("Insufficient balance");
+    });
+
+    it("Should reject bridging out more than maxBridgeInAmount", async function () {
+      const bridgeAmount = ethers.parseUnits("1000", 18);
+      await liberdus.connect(owner).approve(await vault.getAddress(), bridgeAmount);
+
+      const reducedMaxAmount = ethers.parseUnits("500", 18);
+      const cooldownData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [BigInt(60)]);
+      await requestAndSignOperation(vault, 3, ethers.ZeroAddress, reducedMaxAmount, cooldownData);
+
+      await expect(
+        vault.connect(owner)["bridgeOut(uint256,address,uint256,uint256)"](bridgeAmount, recipient.address, chainId, destinationChainId)
+      ).to.be.revertedWith("Amount exceeds bridge-in limit");
     });
 
     it("Should reject bridging out when paused", async function () {
@@ -266,6 +283,11 @@ describe("Vault", function () {
     });
 
     it("Should evict oldest txId after 100 bridge-ins", async function () {
+      const highLimit = ethers.parseUnits("100000", 18);
+      const lowCooldown = BigInt(1);
+      const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [lowCooldown]);
+      await requestAndSignOperation(vault, 3, ethers.ZeroAddress, highLimit, encodedData);
+
       // Fund vault with enough tokens
       const extraFunding = ethers.parseUnits("95000", 18);
       await liberdus.connect(owner).approve(await vault.getAddress(), extraFunding);
@@ -273,12 +295,6 @@ describe("Vault", function () {
 
       // Set bridgeInCaller
       await requestAndSignOperation(vault, 2, owner.address, 0, "0x");
-
-      // Set high limit and low cooldown for this test
-      const highLimit = ethers.parseUnits("100000", 18);
-      const zeroCooldown = BigInt(1);
-      const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [zeroCooldown]);
-      await requestAndSignOperation(vault, 3, ethers.ZeroAddress, highLimit, encodedData);
 
       const bridgeInAmount = ethers.parseUnits("1", 18);
       const txIds = [];

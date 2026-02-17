@@ -2,7 +2,7 @@ const hre = require("hardhat");
 const { ethers } = hre;
 
 async function main() {
-  const TOKEN_ADDRESS = process.env.LIBERDUS_TOKEN_ADDRESS;
+  const TOKEN_ADDRESS = process.env.LIBERDUS_TOKEN_ADDRESS || "0x5FbDB2315678afecb367f032d93F642f64180aa3";
   if (!TOKEN_ADDRESS) {
     throw new Error("Set LIBERDUS_TOKEN_ADDRESS in your .env file (the deployed Liberdus contract address)");
   }
@@ -40,7 +40,6 @@ async function main() {
   signerAddresses.forEach((signer, index) => {
     console.log(`  Signer ${index + 1}:`, signer);
   });
-  console.log("ReleaseCaller set to signer 1:", signerAddresses[0]);
 
   // Wait for block confirmations then verify
   console.log("Waiting for block confirmations...");
