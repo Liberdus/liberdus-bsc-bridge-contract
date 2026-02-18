@@ -42,6 +42,10 @@ async function main() {
   // Attach to deployed contract
   const contract = await hre.ethers.getContractAt(CONTRACT_NAME, CONTRACT_ADDRESS);
 
+  if (CONTRACT_TYPE === "VAULT") {
+    throw new Error("Vault bridgeIn has been removed. Use CONTRACT_TYPE=PRIMARY or SECONDARY.");
+  }
+
   // Verify state (only primary contract has isPreLaunch)
   if (CONTRACT_TYPE === "PRIMARY") {
     const isPreLaunch = await contract.isPreLaunch();

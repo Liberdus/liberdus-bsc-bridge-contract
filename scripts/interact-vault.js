@@ -3,9 +3,9 @@ const { ethers } = hre;
 const OP = Object.freeze({
   PAUSE: 0,
   UNPAUSE: 1,
-  SET_BRIDGE_IN_CALLER: 2,
-  RELINQUISH_TOKENS: 5,
-  SET_BRIDGE_OUT_ENABLED: 6,
+  SET_BRIDGE_OUT_AMOUNT: 2,
+  RELINQUISH_TOKENS: 4,
+  SET_BRIDGE_OUT_ENABLED: 5,
 });
 
 async function requestAndSignOperation(contract, signers, operationType, target, value, data) {
@@ -31,7 +31,7 @@ async function requestAndSignOperation(contract, signers, operationType, target,
 async function main() {
   const VAULT_ADDRESS = process.env.VAULT_ADDRESS;
   const LIBERDUS_ADDRESS = process.env.LIBERDUS_TOKEN_ADDRESS;
-  const ACTION = process.env.ACTION || "balance"; // balance, bridgeOut, bridgeIn, relinquish, setBridgeInCaller, setBridgeOutEnabled, pause, unpause
+  const ACTION = process.env.ACTION || "balance"; // balance, bridgeOut, relinquish, setBridgeOutAmount, setBridgeOutEnabled, pause, unpause
 
   if (!VAULT_ADDRESS) {
     throw new Error("Set VAULT_ADDRESS in your .env file");
@@ -55,14 +55,8 @@ async function main() {
     const vaultBalance = await vault.getVaultBalance();
     console.log(`\nVault Balance: ${ethers.formatUnits(vaultBalance, 18)} LIB`);
 
-    const bridgeInCaller = await vault.bridgeInCaller();
-    console.log(`Bridge In Caller: ${bridgeInCaller}`);
-
-    const maxBridgeInAmount = await vault.maxBridgeInAmount();
-    console.log(`Max Bridge In Amount: ${ethers.formatUnits(maxBridgeInAmount, 18)} LIB`);
-
-    const bridgeInCooldown = await vault.bridgeInCooldown();
-    console.log(`Bridge In Cooldown: ${Number(bridgeInCooldown)}s`);
+    const maxBridgeOutAmount = await vault.maxBridgeOutAmount();
+    console.log(`Max Bridge Out Amount: ${ethers.formatUnits(maxBridgeOutAmount, 18)} LIB`);
 
     const bridgeOutEnabled = await vault.bridgeOutEnabled();
     console.log(`Bridge Out Enabled: ${bridgeOutEnabled}`);
@@ -114,36 +108,6 @@ async function main() {
     return;
   }
 
-  // --- BRIDGE IN ---
-  if (ACTION === "bridgeIn") {
-    const recipient = process.env.RECIPIENT || deployer.address;
-    const amount = ethers.parseUnits(process.env.AMOUNT || "100", 18);
-    const txId = process.env.TX_ID || ethers.id(`bridge-in-${Date.now()}`);
-    const sourceChainId = process.env.SOURCE_CHAIN_ID || 0;
-
-    console.log(`\nBridging in ${ethers.formatUnits(amount, 18)} LIB to ${recipient}...`);
-    console.log(`TX ID: ${txId}`);
-
-    const tx = await vault.connect(deployer)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient, amount, chainId, txId, sourceChainId);
-    const receipt = await tx.wait();
-    console.log("Transaction hash:", receipt.hash);
-    console.log(`Vault Balance: ${ethers.formatUnits(await vault.getVaultBalance(), 18)} LIB`);
-    return;
-  }
-
-  // --- SET BRIDGE IN CALLER ---
-  if (ACTION === "setBridgeInCaller") {
-    const newCaller = process.env.BRIDGE_IN_CALLER;
-    if (!newCaller) {
-      throw new Error("Set BRIDGE_IN_CALLER in your .env file");
-    }
-
-    console.log(`\nSetting bridge in caller to ${newCaller}...`);
-    await requestAndSignOperation(vault, signers, OP.SET_BRIDGE_IN_CALLER, newCaller, 0, "0x");
-    console.log(`Bridge In Caller set to: ${await vault.bridgeInCaller()}`);
-    return;
-  }
-
   // --- SET BRIDGE OUT ENABLED ---
   if (ACTION === "setBridgeOutEnabled") {
     const enabledRaw = process.env.BRIDGE_OUT_ENABLED;
@@ -163,6 +127,26 @@ async function main() {
     const data = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [enabled]);
     await requestAndSignOperation(vault, signers, OP.SET_BRIDGE_OUT_ENABLED, ethers.ZeroAddress, 0, data);
     console.log(`Bridge Out Enabled set to: ${await vault.bridgeOutEnabled()}`);
+    return;
+  }
+
+  // --- SET BRIDGE OUT LIMITS ---
+  if (ACTION === "setBridgeOutAmount") {
+    const maxAmountRaw = process.env.MAX_BRIDGE_OUT_AMOUNT;
+    if (!maxAmountRaw) {
+      throw new Error("Set MAX_BRIDGE_OUT_AMOUNT in your .env file");
+    }
+    const newMaxAmount = ethers.parseUnits(maxAmountRaw, 18);
+    if (newMaxAmount <= 0n) {
+      throw new Error("MAX_BRIDGE_OUT_AMOUNT must be greater than zero");
+    }
+    const current = await vault.maxBridgeOutAmount();
+    if (current === newMaxAmount) {
+      console.log(`Max Bridge Out Amount already ${ethers.formatUnits(newMaxAmount, 18)} LIB, skipping.`);
+      return;
+    }
+    await requestAndSignOperation(vault, signers, OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, newMaxAmount, "0x");
+    console.log(`Max Bridge Out Amount set to: ${ethers.formatUnits(await vault.maxBridgeOutAmount(), 18)} LIB`);
     return;
   }
 
@@ -194,7 +178,7 @@ async function main() {
     return;
   }
 
-  console.error(`Unknown action: ${ACTION}. Use one of: balance, bridgeOut, bridgeIn, setBridgeInCaller, setBridgeOutEnabled, relinquish, pause, unpause`);
+  console.error(`Unknown action: ${ACTION}. Use one of: balance, bridgeOut, setBridgeOutAmount, setBridgeOutEnabled, relinquish, pause, unpause`);
 }
 
 main()

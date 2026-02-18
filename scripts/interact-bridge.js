@@ -112,24 +112,8 @@ async function main() {
     await outTx.wait();
     console.log("Signer 2 secondary bridgeOut successful.");
 
-    const bridgeInCaller = await vault.bridgeInCaller();
-    if (bridgeInCaller.toLowerCase() !== deployer.address.toLowerCase()) {
-      console.log(`Skipping vault bridgeIn: deployer is not bridgeInCaller (${bridgeInCaller}).`);
-    } else {
-      const inTx = await vault
-        .connect(deployer)
-        ["bridgeIn(address,uint256,uint256,bytes32,uint256)"](
-          signer2.address,
-          bridgeBackAmount,
-          CHAIN_ID_PRIMARY,
-          ethers.id(`interact-bridge-${Date.now()}`),
-          CHAIN_ID_SECONDARY
-        );
-      await inTx.wait();
-      console.log("Vault bridgeIn to signer2 successful.");
-      console.log(`Signer 2 Primary Balance: ${ethers.formatUnits(await liberdus.balanceOf(signer2.address), 18)} LIB`);
-      console.log(`Vault Locked Balance: ${ethers.formatUnits(await vault.getVaultBalance(), 18)} LIB`);
-    }
+    console.log(`Signer 2 Primary Balance: ${ethers.formatUnits(await liberdus.balanceOf(signer2.address), 18)} LIB`);
+    console.log(`Vault Locked Balance: ${ethers.formatUnits(await vault.getVaultBalance(), 18)} LIB`);
   } else {
     console.log(`Skipping Secondary->Primary: signer2 needs at least ${ethers.formatUnits(bridgeBackAmount, 18)} LIB.`);
   }

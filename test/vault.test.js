@@ -6,20 +6,18 @@ describe("Vault", function () {
   let liberdus;
   let Vault;
   let vault;
-  let owner, signer1, signer2, signer3, signer4, recipient, bridgeInCaller, other;
+  let owner, signer1, signer2, signer3, signer4, recipient, other;
   let signers;
   let signerAddresses;
   let chainId;
   const destinationChainId = BigInt(97); // BSC testnet
-  const sourceChainId = BigInt(97);
   const OP = Object.freeze({
     PAUSE: 0,
     UNPAUSE: 1,
-    SET_BRIDGE_IN_CALLER: 2,
-    SET_BRIDGE_IN_LIMITS: 3,
-    UPDATE_SIGNER: 4,
-    RELINQUISH_TOKENS: 5,
-    SET_BRIDGE_OUT_ENABLED: 6,
+    SET_BRIDGE_OUT_AMOUNT: 2,
+    UPDATE_SIGNER: 3,
+    RELINQUISH_TOKENS: 4,
+    SET_BRIDGE_OUT_ENABLED: 5,
   });
 
   async function requestAndSignOperation(contract, operationType, target, value, data) {
@@ -50,7 +48,7 @@ describe("Vault", function () {
   }
 
   beforeEach(async function () {
-    [owner, signer1, signer2, signer3, signer4, recipient, bridgeInCaller, other] = await ethers.getSigners();
+    [owner, signer1, signer2, signer3, signer4, recipient, other] = await ethers.getSigners();
     signers = [owner, signer1, signer2, signer3];
     signerAddresses = [owner.address, signer1.address, signer2.address, signer3.address];
     chainId = BigInt((await ethers.provider.getNetwork()).chainId);
@@ -75,10 +73,6 @@ describe("Vault", function () {
       for (let i = 0; i < 4; i++) {
         expect(await vault.isSigner(signerAddresses[i])).to.be.true;
       }
-    });
-
-    it("Should initialize with no bridgeInCaller", async function () {
-      expect(await vault.bridgeInCaller()).to.equal(ethers.ZeroAddress);
     });
 
     it("Should have correct chainId", async function () {
@@ -140,8 +134,7 @@ describe("Vault", function () {
 
     it("Should reject bridging out with insufficient balance", async function () {
       const elevatedLimit = ethers.parseUnits("300000", 18);
-      const cooldownData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [BigInt(60)]);
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_LIMITS, ethers.ZeroAddress, elevatedLimit, cooldownData);
+      await requestAndSignOperation(vault, OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, elevatedLimit, "0x");
 
       const tooMuch = ethers.parseUnits("200000", 18); // More than the 100k minted
       await liberdus.connect(owner).approve(await vault.getAddress(), tooMuch);
@@ -151,17 +144,16 @@ describe("Vault", function () {
       ).to.be.revertedWith("Insufficient balance");
     });
 
-    it("Should reject bridging out more than maxBridgeInAmount", async function () {
+    it("Should reject bridging out more than maxBridgeOutAmount", async function () {
       const bridgeAmount = ethers.parseUnits("1000", 18);
       await liberdus.connect(owner).approve(await vault.getAddress(), bridgeAmount);
 
       const reducedMaxAmount = ethers.parseUnits("500", 18);
-      const cooldownData = ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [BigInt(60)]);
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_LIMITS, ethers.ZeroAddress, reducedMaxAmount, cooldownData);
+      await requestAndSignOperation(vault, OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, reducedMaxAmount, "0x");
 
       await expect(
         vault.connect(owner)["bridgeOut(uint256,address,uint256,uint256)"](bridgeAmount, recipient.address, chainId, destinationChainId)
-      ).to.be.revertedWith("Amount exceeds bridge-in limit");
+      ).to.be.revertedWith("Amount exceeds bridge-out limit");
     });
 
     it("Should reject bridging out when paused", async function () {
@@ -203,178 +195,6 @@ describe("Vault", function () {
       await expect(
         vault.connect(owner)["bridgeOut(uint256,address,uint256,uint256)"](bridgeAmount, recipient.address, chainId, destinationChainId)
       ).to.emit(vault, "BridgedOut");
-    });
-  });
-
-  describe("Bridge In", function () {
-    const bridgeAmount = ethers.parseUnits("5000", 18);
-
-    beforeEach(async function () {
-      await setupLiberdusWithTokens();
-      // Bridge out tokens first to fund the vault
-      await liberdus.connect(owner).approve(await vault.getAddress(), bridgeAmount);
-      await vault.connect(owner)["bridgeOut(uint256,address,uint256,uint256)"](bridgeAmount, recipient.address, chainId, destinationChainId);
-    });
-
-    it("Should set bridge in caller before bridging in", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-      expect(await vault.bridgeInCaller()).to.equal(owner.address);
-    });
-
-    it("Should bridge in tokens successfully", async function () {
-      // Set bridgeInCaller first
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-
-      const bridgeInAmount = ethers.parseUnits("1000", 18);
-      const txId = ethers.id("test-tx-1");
-
-      await expect(vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId, sourceChainId))
-        .to.emit(vault, "BridgedIn");
-
-      expect(await liberdus.balanceOf(recipient.address)).to.equal(bridgeInAmount);
-      expect(await vault.getVaultBalance()).to.equal(bridgeAmount - bridgeInAmount);
-    });
-
-    it("Should reject bridge in from non-bridgeInCaller", async function () {
-      const bridgeInAmount = ethers.parseUnits("1000", 18);
-      const txId = ethers.id("test-tx-1");
-
-      await expect(
-        vault.connect(other)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId, sourceChainId)
-      ).to.be.revertedWith("Not authorized to bridge in");
-    });
-
-    it("Should reject bridging in zero tokens", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-      const txId = ethers.id("test-tx-1");
-
-      await expect(
-        vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, 0, chainId, txId, sourceChainId)
-      ).to.be.revertedWith("Cannot bridge in zero tokens");
-    });
-
-    it("Should reject bridging in to zero address", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-      const bridgeInAmount = ethers.parseUnits("1000", 18);
-      const txId = ethers.id("test-tx-1");
-
-      await expect(
-        vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](ethers.ZeroAddress, bridgeInAmount, chainId, txId, sourceChainId)
-      ).to.be.revertedWith("Invalid recipient address");
-    });
-
-    it("Should reject bridging in more than maxBridgeInAmount", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-      const tooMuch = ethers.parseUnits("10001", 18);
-      const txId = ethers.id("test-tx-1");
-
-      await expect(
-        vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, tooMuch, chainId, txId, sourceChainId)
-      ).to.be.revertedWith("Amount exceeds bridge-in limit");
-    });
-
-    it("Should enforce bridge in cooldown", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-      const bridgeInAmount = ethers.parseUnits("1000", 18);
-      const txId1 = ethers.id("test-tx-1");
-      const txId2 = ethers.id("test-tx-2");
-
-      // First bridge in
-      await vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId1, sourceChainId);
-
-      // Immediate second bridge in should fail
-      await expect(
-        vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId2, sourceChainId)
-      ).to.be.revertedWith("Bridge-in cooldown not met");
-
-      // Wait for cooldown
-      await network.provider.send("evm_increaseTime", [61]);
-      await network.provider.send("evm_mine");
-
-      // Should succeed after cooldown
-      await vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId2, sourceChainId);
-      expect(await liberdus.balanceOf(recipient.address)).to.equal(bridgeInAmount * BigInt(2));
-    });
-
-    it("Should prevent replay with same txId", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-      const bridgeInAmount = ethers.parseUnits("1000", 18);
-      const txId = ethers.id("test-tx-1");
-
-      // First bridge in
-      await vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId, sourceChainId);
-
-      // Wait for cooldown
-      await network.provider.send("evm_increaseTime", [61]);
-      await network.provider.send("evm_mine");
-
-      // Same txId should fail
-      await expect(
-        vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId, sourceChainId)
-      ).to.be.revertedWith("Transaction already processed");
-    });
-
-    it("Should reject bridge in with insufficient vault balance", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-      const bridgeInAmount = ethers.parseUnits("6000", 18); // More than locked
-      const txId = ethers.id("test-tx-1");
-
-      await expect(
-        vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId, sourceChainId)
-      ).to.be.revertedWith("Insufficient vault balance");
-    });
-
-    it("Should evict oldest txId after 100 bridge-ins", async function () {
-      const highLimit = ethers.parseUnits("100000", 18);
-      const lowCooldown = BigInt(1);
-      const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [lowCooldown]);
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_LIMITS, ethers.ZeroAddress, highLimit, encodedData);
-
-      // Fund vault with enough tokens
-      const extraFunding = ethers.parseUnits("95000", 18);
-      await liberdus.connect(owner).approve(await vault.getAddress(), extraFunding);
-      await vault.connect(owner)["bridgeOut(uint256,address,uint256,uint256)"](extraFunding, recipient.address, chainId, destinationChainId);
-
-      // Set bridgeInCaller
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-
-      const bridgeInAmount = ethers.parseUnits("1", 18);
-      const txIds = [];
-
-      // Do 101 bridge-ins
-      for (let i = 0; i < 101; i++) {
-        const txId = ethers.id(`eviction-test-tx-${i}`);
-        txIds.push(txId);
-
-        await network.provider.send("evm_increaseTime", [2]);
-        await network.provider.send("evm_mine");
-
-        await vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId, sourceChainId);
-      }
-
-      // The first txId (index 0) should have been evicted by the 101st bridgeIn
-      expect(await vault.processedTxIds(txIds[0])).to.be.false;
-
-      // The second txId (index 1) should still be processed
-      expect(await vault.processedTxIds(txIds[1])).to.be.true;
-
-      // The last txId should still be processed
-      expect(await vault.processedTxIds(txIds[100])).to.be.true;
-    });
-
-    it("Should allow bridge in when paused", async function () {
-      // Set bridgeInCaller first
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, owner.address, 0, "0x");
-
-      // Pause vault
-      await requestAndSignOperation(vault, OP.PAUSE, ethers.ZeroAddress, 0, "0x");
-
-      const bridgeInAmount = ethers.parseUnits("1000", 18);
-      const txId = ethers.id("test-tx-1");
-
-      // Bridge in should still work when paused
-      await vault.connect(owner)["bridgeIn(address,uint256,uint256,bytes32,uint256)"](recipient.address, bridgeInAmount, chainId, txId, sourceChainId);
-      expect(await liberdus.balanceOf(recipient.address)).to.equal(bridgeInAmount);
     });
   });
 
@@ -443,19 +263,10 @@ describe("Vault", function () {
   });
 
   describe("Multi-sig Operations", function () {
-    it("Should set bridge in caller via multisig", async function () {
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_CALLER, bridgeInCaller.address, 0, "0x");
-      expect(await vault.bridgeInCaller()).to.equal(bridgeInCaller.address);
-    });
-
-    it("Should set bridge in limits via multisig", async function () {
+    it("Should set bridge out amount via multisig", async function () {
       const newMaxAmount = ethers.parseUnits("20000", 18);
-      const newCooldown = BigInt(2 * 60);
-      const encodedData = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [newCooldown]);
-
-      await requestAndSignOperation(vault, OP.SET_BRIDGE_IN_LIMITS, ethers.ZeroAddress, newMaxAmount, encodedData);
-      expect(await vault.maxBridgeInAmount()).to.equal(newMaxAmount);
-      expect(await vault.bridgeInCooldown()).to.equal(newCooldown);
+      await requestAndSignOperation(vault, OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, newMaxAmount, "0x");
+      expect(await vault.maxBridgeOutAmount()).to.equal(newMaxAmount);
     });
 
     it("Should pause and unpause via multisig", async function () {
@@ -496,7 +307,8 @@ describe("Vault", function () {
     });
 
     it("Should require three signatures", async function () {
-      const tx = await vault.requestOperation(OP.SET_BRIDGE_IN_CALLER, bridgeInCaller.address, 0, "0x");
+      const newMaxAmount = ethers.parseUnits("25000", 18);
+      const tx = await vault.requestOperation(OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, newMaxAmount, "0x");
       const receipt = await tx.wait();
       const operationId = receipt.logs.find(log => log.fragment.name === 'OperationRequested').args.operationId;
 
@@ -506,17 +318,17 @@ describe("Vault", function () {
         const signature = await signers[i].signMessage(ethers.getBytes(messageHash));
         await vault.connect(signers[i]).submitSignature(operationId, signature);
       }
-      expect(await vault.bridgeInCaller()).to.not.equal(bridgeInCaller.address);
+      expect(await vault.maxBridgeOutAmount()).to.not.equal(newMaxAmount);
 
       // Third signature executes
       const messageHash = await vault.getOperationHash(operationId);
       const signature = await signers[2].signMessage(ethers.getBytes(messageHash));
       await vault.connect(signers[2]).submitSignature(operationId, signature);
-      expect(await vault.bridgeInCaller()).to.equal(bridgeInCaller.address);
+      expect(await vault.maxBridgeOutAmount()).to.equal(newMaxAmount);
     });
 
     it("Should enforce 3-day operation deadline", async function () {
-      const tx = await vault.requestOperation(OP.SET_BRIDGE_IN_CALLER, bridgeInCaller.address, 0, "0x");
+      const tx = await vault.requestOperation(OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, ethers.parseUnits("20000", 18), "0x");
       const receipt = await tx.wait();
       const operationId = receipt.logs.find(log => log.fragment.name === 'OperationRequested').args.operationId;
 
@@ -550,7 +362,7 @@ describe("Vault", function () {
     });
 
     it("Should check operation expiry correctly", async function () {
-      const tx = await vault.requestOperation(OP.SET_BRIDGE_IN_CALLER, bridgeInCaller.address, 0, "0x");
+      const tx = await vault.requestOperation(OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, ethers.parseUnits("30000", 18), "0x");
       const receipt = await tx.wait();
       const operationId = receipt.logs.find(log => log.fragment.name === 'OperationRequested').args.operationId;
 

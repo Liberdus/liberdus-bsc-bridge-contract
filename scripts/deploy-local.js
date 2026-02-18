@@ -5,9 +5,6 @@ const SECONDARY_OP = Object.freeze({
   SET_BRIDGE_IN_CALLER: 2,
   SET_BRIDGE_OUT_ENABLED: 6,
 });
-const VAULT_OP = Object.freeze({
-  SET_BRIDGE_IN_CALLER: 2,
-});
 
 async function main() {
   const [deployer, signer1, signer2, signer3] = await hre.ethers.getSigners();
@@ -120,10 +117,6 @@ async function main() {
   // ====================================================
   console.log("\n--- Setting up Vault + LiberdusSecondary ---");
 
-  // Set Vault BridgeInCaller (OpType 2)
-  console.log("Setting Vault BridgeInCaller to deployer...");
-  await requestAndSignOperation(vault, VAULT_OP.SET_BRIDGE_IN_CALLER, deployer.address, 0, "0x");
-
   // Set BridgeInCaller (OpType 2) - allowing deployer to act as bridge
   console.log("Setting Secondary BridgeInCaller to deployer...");
   await requestAndSignOperation(
@@ -211,18 +204,8 @@ async function main() {
 
   console.log("Secondary Balance:", ethers.formatUnits(await liberdusSecondary.balanceOf(deployer.address), 18));
 
-  // Simulate Relayer: Bridge In on Vault/Primary
-  console.log(`Bridging in ${ethers.formatUnits(returnAmount, 18)} LIB from Vault to Primary account...`);
-  await vault
-    .connect(deployer)
-  ["bridgeIn(address,uint256,uint256,bytes32,uint256)"](
-    deployer.address,
-    returnAmount,
-    CHAIN_ID_PRIMARY,
-    ethers.id("tx2"),
-    CHAIN_ID_SECONDARY
-  );
-
+  // Vault bridgeIn has been removed.
+  console.log("Vault bridgeIn removed: skipping unlock simulation on primary.");
   console.log("Primary Balance:", ethers.formatUnits(await liberdus.balanceOf(deployer.address), 18));
 
   // ====================================================

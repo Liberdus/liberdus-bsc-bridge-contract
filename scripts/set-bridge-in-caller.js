@@ -15,14 +15,12 @@ async function main() {
   // Addresses to set as bridgeIn caller on each contract
   const BRIDGE_IN_CALLER_PRIMARY = process.env.BRIDGE_IN_CALLER_PRIMARY;
   const BRIDGE_IN_CALLER_SECONDARY = process.env.BRIDGE_IN_CALLER_SECONDARY;
-  const BRIDGE_IN_CALLER_VAULT = process.env.BRIDGE_IN_CALLER_VAULT || BRIDGE_IN_CALLER_PRIMARY;
 
   // Comma-separated recipient addresses for token and ETH transfers
   // Bridge callers are included automatically and deduplicated
   const RECIPIENTS = [...new Set([
     ...(BRIDGE_IN_CALLER_PRIMARY && ethers.isAddress(BRIDGE_IN_CALLER_PRIMARY) ? [BRIDGE_IN_CALLER_PRIMARY] : []),
     ...(BRIDGE_IN_CALLER_SECONDARY && ethers.isAddress(BRIDGE_IN_CALLER_SECONDARY) ? [BRIDGE_IN_CALLER_SECONDARY] : []),
-    ...(BRIDGE_IN_CALLER_VAULT && ethers.isAddress(BRIDGE_IN_CALLER_VAULT) ? [BRIDGE_IN_CALLER_VAULT] : []),
     ...(process.env.RECIPIENTS || signer1.address + "," + signer2.address + "," + signer3.address)
       .split(",")
       .map((a) => a.trim())
@@ -46,8 +44,7 @@ async function main() {
       SET_BRIDGE_OUT_ENABLED: 6,
     }),
     VAULT: Object.freeze({
-      SET_BRIDGE_IN_CALLER: 2,
-      SET_BRIDGE_OUT_ENABLED: 6,
+      SET_BRIDGE_OUT_ENABLED: 5,
     }),
   };
 
@@ -195,22 +192,11 @@ async function main() {
     }
   }
 
-  // Vault: OpType 2 = SetBridgeInCaller
+  // Vault: bridgeOutEnabled control
   if (!VAULT_ADDR) {
-    console.log("\nVault address not provided (VAULT_ADDRESS). Skipping Vault BridgeInCaller setup.");
+    console.log("\nVault address not provided (VAULT_ADDRESS). Skipping Vault setup.");
   } else if (!vault) {
     console.log(`\nWarning: Invalid VAULT_ADDRESS: ${VAULT_ADDR}`);
-  } else if (BRIDGE_IN_CALLER_VAULT && ethers.isAddress(BRIDGE_IN_CALLER_VAULT)) {
-    const currentVaultCaller = await vault.bridgeInCaller();
-    if (currentVaultCaller.toLowerCase() === BRIDGE_IN_CALLER_VAULT.toLowerCase()) {
-      console.log(`Vault BridgeInCaller already set to ${BRIDGE_IN_CALLER_VAULT}, skipping.`);
-    } else {
-      console.log(`--- Setting BridgeInCaller on Vault to ${BRIDGE_IN_CALLER_VAULT} ---`);
-      await requestAndSignOperation(vault, OP_TYPES.VAULT.SET_BRIDGE_IN_CALLER, BRIDGE_IN_CALLER_VAULT, 0, "0x");
-      console.log("  Done.");
-    }
-  } else if (BRIDGE_IN_CALLER_VAULT) {
-    console.log(`\nWarning: Invalid BRIDGE_IN_CALLER_VAULT address: ${BRIDGE_IN_CALLER_VAULT}`);
   }
 
   const desiredVaultBridgeOutEnabled = parseOptionalBoolean(VAULT_BRIDGE_OUT_ENABLED, "VAULT_BRIDGE_OUT_ENABLED");
