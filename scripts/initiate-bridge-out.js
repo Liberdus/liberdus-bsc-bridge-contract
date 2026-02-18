@@ -48,6 +48,12 @@ async function main() {
     if (isPreLaunch) {
       throw new Error("Contract is still in pre-launch mode. Bridge out not available.");
     }
+  } else if (CONTRACT_TYPE === "SECONDARY") {
+    const bridgeOutEnabled = await contract.bridgeOutEnabled();
+    console.log("bridgeOutEnabled:", bridgeOutEnabled);
+    if (!bridgeOutEnabled) {
+      throw new Error("Secondary bridgeOut is disabled. Enable it via multisig first.");
+    }
   }
 
   let tokenContract = null;

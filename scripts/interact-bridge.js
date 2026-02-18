@@ -94,9 +94,13 @@ async function main() {
   console.log("\n--- Secondary -> Primary via Vault ---");
   const bridgeBackAmount = ethers.parseUnits(process.env.BRIDGE_BACK_AMOUNT || "1", 18);
   const signer2SecondaryBal = await liberdusSecondary.balanceOf(signer2.address);
+  const secondaryBridgeOutEnabled = await liberdusSecondary.bridgeOutEnabled();
+  console.log(`Secondary bridgeOutEnabled: ${secondaryBridgeOutEnabled}`);
   console.log(`Signer 2 Secondary Balance: ${ethers.formatUnits(signer2SecondaryBal, 18)} LIB`);
 
-  if (signer2SecondaryBal >= bridgeBackAmount) {
+  if (!secondaryBridgeOutEnabled) {
+    console.log("Skipping Secondary->Primary: secondary bridgeOut is disabled.");
+  } else if (signer2SecondaryBal >= bridgeBackAmount) {
     const outTx = await liberdusSecondary
       .connect(signer2)
       ["bridgeOut(uint256,address,uint256,uint256)"](

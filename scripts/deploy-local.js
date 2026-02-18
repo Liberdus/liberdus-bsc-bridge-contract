@@ -1,6 +1,10 @@
 const hre = require("hardhat");
 const { ZeroAddress } = require("hardhat").ethers;
 const { ethers } = hre;
+const SECONDARY_OP = Object.freeze({
+  SET_BRIDGE_IN_CALLER: 2,
+  SET_BRIDGE_OUT_ENABLED: 6,
+});
 
 async function main() {
   const [deployer, signer1, signer2, signer3] = await hre.ethers.getSigners();
@@ -119,7 +123,26 @@ async function main() {
 
   // Set BridgeInCaller (OpType 2) - allowing deployer to act as bridge
   console.log("Setting Secondary BridgeInCaller to deployer...");
-  await requestAndSignOperation(liberdusSecondary, 2, deployer.address, 0, "0x");
+  await requestAndSignOperation(
+    liberdusSecondary,
+    SECONDARY_OP.SET_BRIDGE_IN_CALLER,
+    deployer.address,
+    0,
+    "0x"
+  );
+
+  // Enable bridgeOut for local bridge round-trip tests.
+  if (!(await liberdusSecondary.bridgeOutEnabled())) {
+    console.log("Enabling Secondary bridgeOut...");
+    const enableBridgeOutData = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [true]);
+    await requestAndSignOperation(
+      liberdusSecondary,
+      SECONDARY_OP.SET_BRIDGE_OUT_ENABLED,
+      ZeroAddress,
+      0,
+      enableBridgeOutData
+    );
+  }
 
 
   // ====================================================

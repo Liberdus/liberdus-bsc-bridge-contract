@@ -31,6 +31,23 @@ async function main() {
 
   const TOKEN_AMOUNT = process.env.TOKEN_AMOUNT || "100";
   const ETH_AMOUNT = process.env.ETH_AMOUNT || "10";
+  const SECONDARY_BRIDGE_IN_ENABLED = process.env.SECONDARY_BRIDGE_IN_ENABLED;
+  const SECONDARY_BRIDGE_OUT_ENABLED = process.env.SECONDARY_BRIDGE_OUT_ENABLED;
+
+  const OP_TYPES = {
+    PRIMARY: Object.freeze({
+      SET_BRIDGE_IN_CALLER: 5,
+      DISTRIBUTE_TOKENS: 8,
+    }),
+    SECONDARY: Object.freeze({
+      SET_BRIDGE_IN_CALLER: 2,
+      SET_BRIDGE_IN_ENABLED: 5,
+      SET_BRIDGE_OUT_ENABLED: 6,
+    }),
+    VAULT: Object.freeze({
+      SET_BRIDGE_IN_CALLER: 2,
+    }),
+  };
 
   let signers;
   if (hre.network.name === "hardhat" || hre.network.name === "localhost") {
@@ -40,6 +57,21 @@ async function main() {
   }
 
   // --- HELPER ---
+  function parseOptionalBoolean(rawValue, envName) {
+    if (rawValue === undefined || rawValue === null || rawValue === "") {
+      return null;
+    }
+
+    const normalized = String(rawValue).trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0") {
+      return false;
+    }
+    throw new Error(`${envName} must be one of: true, false, 1, 0`);
+  }
+
   async function requestAndSignOperation(contract, operationType, target, value, data) {
     const tx = await contract.requestOperation(operationType, target, value, data);
     const receipt = await tx.wait();
@@ -113,25 +145,52 @@ async function main() {
       console.log(`\nPrimary BridgeInCaller already set to ${BRIDGE_IN_CALLER_PRIMARY}, skipping.`);
     } else {
       console.log(`\n--- Setting BridgeInCaller on Primary to ${BRIDGE_IN_CALLER_PRIMARY} ---`);
-      await requestAndSignOperation(liberdus, 5, BRIDGE_IN_CALLER_PRIMARY, 0, "0x");
+      await requestAndSignOperation(liberdus, OP_TYPES.PRIMARY.SET_BRIDGE_IN_CALLER, BRIDGE_IN_CALLER_PRIMARY, 0, "0x");
       console.log("  Done.");
     }
   } else if (BRIDGE_IN_CALLER_PRIMARY) {
     console.log(`\nWarning: Invalid BRIDGE_IN_CALLER_PRIMARY address: ${BRIDGE_IN_CALLER_PRIMARY}`);
   }
 
-  // Secondary: OpType 3 = SetBridgeInCaller
+  // Secondary: OpType 2 = SetBridgeInCaller
   if (BRIDGE_IN_CALLER_SECONDARY && ethers.isAddress(BRIDGE_IN_CALLER_SECONDARY)) {
     const currentSecondaryCaller = await liberdusSecondary.bridgeInCaller();
     if (currentSecondaryCaller.toLowerCase() === BRIDGE_IN_CALLER_SECONDARY.toLowerCase()) {
       console.log(`Secondary BridgeInCaller already set to ${BRIDGE_IN_CALLER_SECONDARY}, skipping.`);
     } else {
       console.log(`--- Setting BridgeInCaller on Secondary to ${BRIDGE_IN_CALLER_SECONDARY} ---`);
-      await requestAndSignOperation(liberdusSecondary, 2, BRIDGE_IN_CALLER_SECONDARY, 0, "0x");
+      await requestAndSignOperation(liberdusSecondary, OP_TYPES.SECONDARY.SET_BRIDGE_IN_CALLER, BRIDGE_IN_CALLER_SECONDARY, 0, "0x");
       console.log("  Done.");
     }
   } else if (BRIDGE_IN_CALLER_SECONDARY) {
     console.log(`\nWarning: Invalid BRIDGE_IN_CALLER_SECONDARY address: ${BRIDGE_IN_CALLER_SECONDARY}`);
+  }
+
+  // Secondary bridge direction flags (optional)
+  const desiredBridgeInEnabled = parseOptionalBoolean(SECONDARY_BRIDGE_IN_ENABLED, "SECONDARY_BRIDGE_IN_ENABLED");
+  if (desiredBridgeInEnabled !== null) {
+    const currentBridgeInEnabled = await liberdusSecondary.bridgeInEnabled();
+    if (currentBridgeInEnabled === desiredBridgeInEnabled) {
+      console.log(`Secondary bridgeInEnabled already ${desiredBridgeInEnabled}, skipping.`);
+    } else {
+      console.log(`--- Setting Secondary bridgeInEnabled to ${desiredBridgeInEnabled} ---`);
+      const data = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [desiredBridgeInEnabled]);
+      await requestAndSignOperation(liberdusSecondary, OP_TYPES.SECONDARY.SET_BRIDGE_IN_ENABLED, ethers.ZeroAddress, 0, data);
+      console.log("  Done.");
+    }
+  }
+
+  const desiredBridgeOutEnabled = parseOptionalBoolean(SECONDARY_BRIDGE_OUT_ENABLED, "SECONDARY_BRIDGE_OUT_ENABLED");
+  if (desiredBridgeOutEnabled !== null) {
+    const currentBridgeOutEnabled = await liberdusSecondary.bridgeOutEnabled();
+    if (currentBridgeOutEnabled === desiredBridgeOutEnabled) {
+      console.log(`Secondary bridgeOutEnabled already ${desiredBridgeOutEnabled}, skipping.`);
+    } else {
+      console.log(`--- Setting Secondary bridgeOutEnabled to ${desiredBridgeOutEnabled} ---`);
+      const data = ethers.AbiCoder.defaultAbiCoder().encode(["bool"], [desiredBridgeOutEnabled]);
+      await requestAndSignOperation(liberdusSecondary, OP_TYPES.SECONDARY.SET_BRIDGE_OUT_ENABLED, ethers.ZeroAddress, 0, data);
+      console.log("  Done.");
+    }
   }
 
   // Vault: OpType 2 = SetBridgeInCaller
@@ -145,7 +204,7 @@ async function main() {
       console.log(`Vault BridgeInCaller already set to ${BRIDGE_IN_CALLER_VAULT}, skipping.`);
     } else {
       console.log(`--- Setting BridgeInCaller on Vault to ${BRIDGE_IN_CALLER_VAULT} ---`);
-      await requestAndSignOperation(vault, 2, BRIDGE_IN_CALLER_VAULT, 0, "0x");
+      await requestAndSignOperation(vault, OP_TYPES.VAULT.SET_BRIDGE_IN_CALLER, BRIDGE_IN_CALLER_VAULT, 0, "0x");
       console.log("  Done.");
     }
   } else if (BRIDGE_IN_CALLER_VAULT) {
@@ -164,7 +223,7 @@ async function main() {
       const contractBalance = await liberdus.balanceOf(await liberdus.getAddress());
       if (contractBalance >= tokenAmount) {
         console.log(`Distributing ${TOKEN_AMOUNT} LIB from Primary contract to ${recipient}...`);
-        await requestAndSignOperation(liberdus, 8, recipient, tokenAmount, "0x");
+        await requestAndSignOperation(liberdus, OP_TYPES.PRIMARY.DISTRIBUTE_TOKENS, recipient, tokenAmount, "0x");
       } else {
         const deployerPrimaryBal = await liberdus.balanceOf(deployer.address);
         if (deployerPrimaryBal >= tokenAmount) {

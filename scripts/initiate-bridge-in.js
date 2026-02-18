@@ -49,6 +49,12 @@ async function main() {
     if (isPreLaunch) {
       throw new Error("Contract is still in pre-launch mode. Redeploy with updated constructor.");
     }
+  } else if (CONTRACT_TYPE === "SECONDARY") {
+    const bridgeInEnabled = await contract.bridgeInEnabled();
+    console.log("bridgeInEnabled:", bridgeInEnabled);
+    if (!bridgeInEnabled) {
+      throw new Error("Secondary bridgeIn is disabled. Enable it via multisig first.");
+    }
   }
 
   const bridgeInCaller = await contract.bridgeInCaller();
