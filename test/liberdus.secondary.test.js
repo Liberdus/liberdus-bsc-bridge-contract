@@ -8,13 +8,11 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
   let signers;
   let chainId;
   const OP = Object.freeze({
-    PAUSE: 0,
-    UNPAUSE: 1,
-    SET_BRIDGE_IN_CALLER: 2,
-    SET_BRIDGE_IN_LIMITS: 3,
-    UPDATE_SIGNER: 4,
-    SET_BRIDGE_IN_ENABLED: 5,
-    SET_BRIDGE_OUT_ENABLED: 6,
+    SET_BRIDGE_IN_CALLER: 0,
+    SET_BRIDGE_IN_LIMITS: 1,
+    UPDATE_SIGNER: 2,
+    SET_BRIDGE_IN_ENABLED: 3,
+    SET_BRIDGE_OUT_ENABLED: 4,
   });
 
   async function requestAndSignOperation(operationType, target, value, data) {
@@ -170,22 +168,6 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
     ).to.be.revertedWith("Amount exceeds bridge-in limit");
   });
 
-  it("Should pause and unpause via multisig", async function () {
-    await requestAndSignOperation(OP.SET_BRIDGE_IN_CALLER, bridgeInCaller.address, 0, "0x");
-    const bridgeInAmount = ethers.parseUnits("1000", 18);
-
-    await liberdus.connect(bridgeInCaller).bridgeIn(recipient.address, bridgeInAmount, chainId, ethers.id("testTxId"));
-
-    await requestAndSignOperation(OP.PAUSE, ethers.ZeroAddress, 0, "0x"); // Pause
-    await expect(
-      liberdus.connect(recipient).transfer(owner.address, bridgeInAmount)
-    ).to.be.revertedWithCustomError(liberdus, "EnforcedPause");
-
-    await requestAndSignOperation(OP.UNPAUSE, ethers.ZeroAddress, 0, "0x"); // Unpause
-    await liberdus.connect(recipient).transfer(owner.address, bridgeInAmount);
-    expect(await liberdus.balanceOf(owner.address)).to.equal(bridgeInAmount);
-  });
-
   it("Should require three signatures for multisig operations", async function () {
     const tx = await liberdus.requestOperation(OP.SET_BRIDGE_IN_CALLER, bridgeInCaller.address, 0, "0x");
     const receipt = await tx.wait();
@@ -278,7 +260,7 @@ describe("Liberdus (Secondary Bridge Contract)", function () {
     ).to.be.revertedWith("Operation deadline passed");
   });
 
-  it("Should allow transfer and transferFrom when not paused", async function () {
+  it("Should allow transfer and transferFrom", async function () {
     await requestAndSignOperation(OP.SET_BRIDGE_IN_CALLER, bridgeInCaller.address, 0, "0x");
     const bridgeInAmount = ethers.parseUnits("1000", 18);
     await liberdus.connect(bridgeInCaller).bridgeIn(recipient.address, bridgeInAmount, chainId, ethers.id("testTxId"));

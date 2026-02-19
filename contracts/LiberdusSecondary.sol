@@ -2,17 +2,14 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract LiberdusSecondary is ERC20, Pausable, ReentrancyGuard, Ownable {
+contract LiberdusSecondary is ERC20, ReentrancyGuard, Ownable {
     using ECDSA for bytes32;
 
     enum OperationType {
-        Pause,
-        Unpause,
         SetBridgeInCaller,
         SetBridgeInLimits,
         UpdateSigner,
@@ -226,10 +223,6 @@ contract LiberdusSecondary is ERC20, Pausable, ReentrancyGuard, Ownable {
 
         if (op.opType == OperationType.UpdateSigner) {
             _executeUpdateSigner(operationId, op.target, address(uint160(op.value)));
-        } else if (op.opType == OperationType.Pause) {
-            _pause();
-        } else if (op.opType == OperationType.Unpause) {
-            _unpause();
         } else if (op.opType == OperationType.SetBridgeInCaller) {
             _executeSetBridgeInCaller(operationId, op.target);
         } else if (op.opType == OperationType.SetBridgeInLimits) {
@@ -299,7 +292,7 @@ contract LiberdusSecondary is ERC20, Pausable, ReentrancyGuard, Ownable {
         emit BridgeOutStatusUpdated(operationId, enabled, block.timestamp);
     }
 
-    function bridgeOut(uint256 amount, address targetAddress, uint256 _chainId) public whenNotPaused {
+    function bridgeOut(uint256 amount, address targetAddress, uint256 _chainId) public {
         require(bridgeOutEnabled, "Bridge-out disabled");
         require(_chainId == chainId, "Invalid chain ID");
         require(amount > 0, "Cannot bridge out zero tokens");
@@ -309,7 +302,7 @@ contract LiberdusSecondary is ERC20, Pausable, ReentrancyGuard, Ownable {
         emit BridgedOut(msg.sender, amount, targetAddress, _chainId, block.timestamp);
     }
 
-    function bridgeIn(address to, uint256 amount, uint256 _chainId, bytes32 txId) public onlyBridgeInCaller whenNotPaused {
+    function bridgeIn(address to, uint256 amount, uint256 _chainId, bytes32 txId) public onlyBridgeInCaller {
         require(bridgeInEnabled, "Bridge-in disabled");
         require(_chainId == chainId, "Invalid chain ID");
         require(amount > 0, "Cannot bridge in zero tokens");
@@ -338,16 +331,6 @@ contract LiberdusSecondary is ERC20, Pausable, ReentrancyGuard, Ownable {
         return keccak256(abi.encodePacked(operationId, op.opType, op.target, op.value, op.data, chainId));
     }
 
-    // Override transfer function to check for pause
-    function transfer(address to, uint256 amount) public override whenNotPaused returns (bool) {
-        return super.transfer(to, amount);
-    }
-
-    // Override transferFrom function to check for pause
-    function transferFrom(address from, address to, uint256 amount) public override whenNotPaused returns (bool) {
-        return super.transferFrom(from, to, amount);
-    }
-
     function getChainId() public view returns (uint256) {
         return chainId;
     }
@@ -356,9 +339,4 @@ contract LiberdusSecondary is ERC20, Pausable, ReentrancyGuard, Ownable {
         return block.timestamp > operations[operationId].deadline;
     }
 
-    /// @dev Overrides the _update function to add pause functionality to all token movements.
-    /// This ensures that transfers, minting, and burning are all halted when the contract is paused.
-    function _update(address from, address to, uint256 amount) internal override whenNotPaused {
-        super._update(from, to, amount);
-    }
 }
