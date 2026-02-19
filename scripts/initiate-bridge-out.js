@@ -86,7 +86,7 @@ async function main() {
   }
 
   console.log(`\nBridging out ${ethers.formatUnits(amount, 18)} LIB to ${targetAddress} on destination chain...`);
-  
+
   let tx;
   if (CONTRACT_TYPE === "PRIMARY") {
     tx = await contract.bridgeOut(amount, targetAddress, chainId);

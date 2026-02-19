@@ -4,7 +4,7 @@ const path = require('path');
 async function flattenContract() {
   const nodeModulesPath = path.resolve(__dirname, '../node_modules');
   const sourcesPath = path.resolve(__dirname, '../contracts');
-  
+
   const processedFiles = new Set();
   let flattenedContent = '';
   const licenses = new Set();
@@ -50,13 +50,13 @@ async function flattenContract() {
         if (importMatch) {
           const importPath = importMatch[1];
           let fullPath;
-          
+
           if (importPath.startsWith('@openzeppelin')) {
             fullPath = path.join(nodeModulesPath, importPath);
           } else {
             fullPath = path.join(path.dirname(filePath), importPath);
           }
-          
+
           content += processFile(fullPath);
         }
         continue;
@@ -73,17 +73,16 @@ async function flattenContract() {
   }
 
   // Process main contract
-  const mainContractPath = path.join(sourcesPath, 'Liberdus.sol');
+  const mainContractPath = path.join(sourcesPath, 'Vault.sol');
   const flattenedCode = processFile(mainContractPath);
 
   // Combine everything
   let output = '';
-  
   // Add SPDX license
   if (licenses.size > 0) {
     output += Array.from(licenses)[0] + '\n';
   }
-  
+
   // Add pragma statements
   if (pragmas.size > 0) {
     output += Array.from(pragmas).join('\n') + '\n';
@@ -96,8 +95,8 @@ async function flattenContract() {
   output += flattenedCode;
 
   // Write to file
-  fs.writeFileSync('Liberdus.flat.sol', output);
-  console.log('Created flattened contract: Liberdus.flat.sol');
+  fs.writeFileSync('Vault.flat.sol', output);
+  console.log('Created flattened contract: Vault.flat.sol');
 }
 
 flattenContract()

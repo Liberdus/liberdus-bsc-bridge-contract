@@ -1,98 +1,174 @@
-# Liberdus
+# liberdus-bsc-bridge-contract
 
-Liberdus is a multi-signature ERC20 token with bridging capabilities, designed for both pre-launch and post-launch phases. It features controlled minting, burning, and cross-chain bridging functionalities.
+Vault contract for bridging Liberdus tokens from Polygon to BSC, used only before Liberdus mainnet launch.
 
-## Features
+## Overview
 
-- Multi-signature governance
-- Pre-launch and post-launch modes
-- Controlled minting with time intervals and supply cap
-- Burning functionality
-- Cross-chain bridging (in and out)
-- Pausable transfers
+This repository contains the **Vault** contract — a multi-signature token vault that facilitates bridging Liberdus (LIB) tokens from Polygon to BSC prior to the Liberdus network mainnet launch.
 
-## Prerequisites
+The broader Liberdus bridge architecture uses three separate contracts:
 
-- Node.js (v14.0.0 or later)
-- npm (v6.0.0 or later)
+| Repo | Role |
+|---|---|
+| `liberdus-token-contract` | Primary — main Liberdus ERC20 contract |
+| `liberdus-bridge-contract` | Secondary — bridging between EVM chains (excl. Polygon POS) and Liberdus network |
+| `liberdus-bsc-bridge-contract` | **Vault** — bridging from Polygon to BSC (pre-mainnet only) |
 
-## Installation
+## How It Works
 
-1. Clone the repository:
-   ```
-   git clone https://github.com/your-username/liberdus-token.git
-   cd liberdus-token
-   ```
+Users deposit LIB tokens into the Vault on Polygon by calling `bridgeOut`. The Vault holds the tokens and emits a `BridgedOut` event. A trusted relayer monitors these events and mints equivalent tokens on BSC via the secondary contract.
 
-2. Install dependencies:
-   ```
-   npm install
-   ```
+The Vault is governed by a 4-signer multi-sig scheme (3-of-4 required for execution) for all administrative operations. Once the Liberdus mainnet is live, the Vault can be permanently halted via the `RelinquishTokens` operation, which transfers all held tokens back to the token contract and disables further bridge-outs.
 
-3. Create a `.env` file in the root directory and add your environment variables:
-   ```
-   MNEMONIC=your mnemonic phrase here
-   MUMBAI_RPC_URL=https://rpc-mumbai.maticvigil.com
-   PRIVATE_KEY=your_private_key_here
-   POLYGONSCAN_API_KEY=your_polygonscan_api_key_here
-   ```
+## Contract: Vault.sol
 
-## Usage
+### State Variables
 
-### Compiling Contracts
+| Variable | Description |
+|---|---|
+| `token` | The ERC20 token (LIB) this vault manages |
+| `signers[4]` | The four authorized multi-sig signers |
+| `maxBridgeOutAmount` | Per-transaction bridge-out limit (default: 10,000 LIB) |
+| `bridgeOutEnabled` | Whether bridge-out is currently active |
+| `halted` | Permanently halted flag (set by `RelinquishTokens`) |
+| `chainId` | The chain ID this vault is deployed on |
 
+### Operations (Multi-Sig)
+
+All administrative operations require 3-of-4 signer approval and must be executed within 3 days of being requested.
+
+| Operation | Description |
+|---|---|
+| `SetBridgeOutAmount` | Update the per-transaction bridge-out limit |
+| `UpdateSigner` | Replace one signer with a new address |
+| `SetBridgeOutEnabled` | Enable or disable bridge-out |
+| `RelinquishTokens` | Transfer all vault tokens back to the token contract and permanently halt the vault |
+
+### User-Facing Functions
+
+- **`bridgeOut(amount, targetAddress, chainId)`** — Deposit LIB tokens into the vault to initiate a bridge to BSC. Emits `BridgedOut`.
+
+### Multi-Sig Workflow
+
+1. A signer (or owner) calls `requestOperation(opType, target, value, data)` → returns `operationId`
+2. Three signers each call `submitSignature(operationId, signature)` with an EIP-191 signature over the operation hash
+3. On the third signature, the operation is automatically executed
+
+## Setup
+
+### Prerequisites
+
+- Node.js >= 18
+- npm
+
+### Install
+
+```bash
+npm install
 ```
-npx hardhat compile
-```
 
-### Running Tests
+### Environment Variables
 
-```
-npx hardhat test
+Create a `.env` file:
+
+```env
+# Deployment
+PRIVATE_KEY=0x...                 # Deployer private key
+LIBERDUS_TOKEN_ADDRESS=0x...      # Deployed LIB token address
+
+# Signers (for production networks)
+SIGNER_1=0x...
+SIGNER_2=0x...
+SIGNER_3=0x...
+SIGNER_4=0x...
+
+# RPC URLs
+POLYGON_URL=https://polygon-rpc.com
+BSC_TESTNET_URL=https://bsc-testnet-dataseed.bnbchain.org
+
+# Block explorer API keys
+POLYGONSCAN_API_KEY=...
+BSCSCAN_API_KEY=...
+
+# For interact-vault.js
+VAULT_ADDRESS=0x...
+ACTION=balance
 ```
 
 ## Deployment
 
-### Deploying to Local Hardhat Network
+Deploy the Vault contract (requires `LIBERDUS_TOKEN_ADDRESS` and signers configured for the target network):
 
-```
-npx hardhat run scripts/deploy.js
-```
+```bash
+# Deploy to Polygon
+npx hardhat run scripts/deploy-vault.js --network polygon
 
-### Deploying to Mumbai Testnet
-
-Before deploying to Mumbai testnet, make sure you have set up your `.env` file with the necessary environment variables, including your `PRIVATE_KEY` and `MUMBAI_RPC_URL`.
-
-```
-npx hardhat run scripts/deploy.js --network mumbai
+# Deploy to BSC Testnet
+npx hardhat run scripts/deploy-vault.js --network bscTestnet
 ```
 
-After deployment, the script will output the contract address and the initial signers. Make sure to save this information for future interactions with the contract.
+## Interaction
 
-If deploying to a public testnet or mainnet, the script will automatically attempt to verify the contract on Etherscan (or the equivalent block explorer) after deployment. Ensure you have set the appropriate API key in your `.env` file.
+Use `interact-vault.js` to perform vault operations locally or on a live network. Set the `ACTION` environment variable to one of the supported actions below.
 
-## Contract Functions
+### Check Balance & Status
 
-- `requestOperation`: Initiates a multi-sig operation
-- `submitSignature`: Submits a signature for a pending operation
-- `bridgeOut`: Bridges tokens out to another chain
-- `bridgeIn`: Bridges tokens in from another chain
-- `pause`: Pauses all token transfers
-- `unpause`: Unpauses token transfers
+```bash
+ACTION=balance VAULT_ADDRESS=0x... npx hardhat run scripts/interact-vault.js --network localhost
+```
 
-## Security
+### Bridge Out
 
-This project utilizes OpenZeppelin contracts for enhanced security. However, it has not been audited. Use at your own risk.
+```bash
+ACTION=bridgeOut \
+  VAULT_ADDRESS=0x... \
+  LIBERDUS_TOKEN_ADDRESS=0x... \
+  AMOUNT=100 \
+  TARGET_ADDRESS=0x... \
+  npx hardhat run scripts/interact-vault.js --network localhost
+```
 
-## Contributing
+### Set Bridge Out Amount
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```bash
+ACTION=setBridgeOutAmount \
+  VAULT_ADDRESS=0x... \
+  MAX_BRIDGE_OUT_AMOUNT=5000 \
+  npx hardhat run scripts/interact-vault.js --network localhost
+```
+
+### Enable / Disable Bridge Out
+
+```bash
+ACTION=setBridgeOutEnabled \
+  VAULT_ADDRESS=0x... \
+  BRIDGE_OUT_ENABLED=false \
+  npx hardhat run scripts/interact-vault.js --network localhost
+```
+
+### Relinquish (Permanent Halt)
+
+```bash
+ACTION=relinquish \
+  VAULT_ADDRESS=0x... \
+  npx hardhat run scripts/interact-vault.js --network localhost
+```
+
+## Testing
+
+```bash
+npx hardhat test test/vault.test.js
+```
+
+## Networks
+
+| Network | Chain ID | Purpose |
+|---|---|---|
+| Polygon | 137 | Mainnet deployment (source chain) |
+| Amoy | 80002 | Polygon testnet |
+| BSC Testnet | 97 | BSC testnet |
+| Localhost | 31337 | Local development |
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgements
-
-- OpenZeppelin for their secure smart contract libraries
-- Hardhat for the Ethereum development environment
+MIT

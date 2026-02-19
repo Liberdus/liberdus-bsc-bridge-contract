@@ -78,7 +78,11 @@ async function main() {
       throw new Error("Set LIBERDUS_TOKEN_ADDRESS in your .env file");
     }
 
-    const liberdus = await hre.ethers.getContractAt("Liberdus", LIBERDUS_ADDRESS);
+    const erc20Abi = [
+      "function balanceOf(address account) view returns (uint256)",
+      "function approve(address spender, uint256 amount) returns (bool)",
+    ];
+    const liberdus = new ethers.Contract(LIBERDUS_ADDRESS, erc20Abi, deployer);
     const amount = ethers.parseUnits(process.env.AMOUNT || "100", 18);
     const targetAddress = process.env.TARGET_ADDRESS || deployer.address;
 
