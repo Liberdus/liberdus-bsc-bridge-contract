@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
 describe("Vault", function () {
-  let Liberdus;
+  let TestToken;
   let liberdus;
   let Vault;
   let vault;
@@ -34,14 +34,8 @@ describe("Vault", function () {
   }
 
   async function setupLiberdusWithTokens() {
-    // Mint tokens via multisig (OpType 0 = Mint)
-    await requestAndSignOperation(liberdus, 0, owner.address, 0, "0x");
-
-    // Distribute tokens to owner (OpType 8 = DistributeTokens)
-    const distributionAmount = ethers.parseUnits("100000", 18);
-    await requestAndSignOperation(liberdus, 8, owner.address, distributionAmount, "0x");
-
-    return distributionAmount;
+    // TestToken constructor already mints initial supply to deployer/owner.
+    return ethers.parseUnits("2000000", 18);
   }
 
   beforeEach(async function () {
@@ -50,9 +44,9 @@ describe("Vault", function () {
     signerAddresses = [owner.address, signer1.address, signer2.address, signer3.address];
     chainId = BigInt((await ethers.provider.getNetwork()).chainId);
 
-    // Deploy Liberdus (primary token)
-    Liberdus = await ethers.getContractFactory("Liberdus");
-    liberdus = await Liberdus.deploy(signerAddresses, chainId);
+    // Deploy test ERC20 token used by the vault
+    TestToken = await ethers.getContractFactory("TestToken");
+    liberdus = await TestToken.deploy();
     await liberdus.waitForDeployment();
 
     // Deploy Vault
@@ -103,7 +97,7 @@ describe("Vault", function () {
         .to.emit(vault, "BridgedOut");
 
       expect(await vault.getVaultBalance()).to.equal(bridgeAmount);
-      expect(await liberdus.balanceOf(owner.address)).to.equal(ethers.parseUnits("99000", 18));
+      expect(await liberdus.balanceOf(owner.address)).to.equal(ethers.parseUnits("1999000", 18));
     });
 
     it("Should reject bridging out zero tokens", async function () {
@@ -130,10 +124,10 @@ describe("Vault", function () {
     });
 
     it("Should reject bridging out with insufficient balance", async function () {
-      const elevatedLimit = ethers.parseUnits("300000", 18);
+      const elevatedLimit = ethers.parseUnits("4000000", 18);
       await requestAndSignOperation(vault, OP.SET_BRIDGE_OUT_AMOUNT, ethers.ZeroAddress, elevatedLimit, "0x");
 
-      const tooMuch = ethers.parseUnits("200000", 18); // More than the 100k minted
+      const tooMuch = ethers.parseUnits("3000000", 18); // More than TestToken's 2M initial owner balance
       await liberdus.connect(owner).approve(await vault.getAddress(), tooMuch);
 
       await expect(
@@ -448,6 +442,83 @@ describe("Vault", function () {
       await network.provider.send("evm_mine");
 
       expect(await vault.isOperationExpired(operationId)).to.be.true;
+    });
+  });
+
+  describe("Operation Pruning", function () {
+    it("Should prune prunable operations by explicit IDs", async function () {
+      const executedOp = await requestAndSignOperation(
+        vault,
+        OP.SET_BRIDGE_OUT_AMOUNT,
+        ethers.ZeroAddress,
+        ethers.parseUnits("20000", 18),
+        "0x"
+      );
+
+      const pendingTx = await vault.requestOperation(
+        OP.SET_BRIDGE_OUT_AMOUNT,
+        ethers.ZeroAddress,
+        ethers.parseUnits("21000", 18),
+        "0x"
+      );
+      const pendingReceipt = await pendingTx.wait();
+      const pendingOp = pendingReceipt.logs.find(log => log.fragment.name === "OperationRequested").args.operationId;
+
+      const expiredTx = await vault.requestOperation(
+        OP.SET_BRIDGE_OUT_AMOUNT,
+        ethers.ZeroAddress,
+        ethers.parseUnits("22000", 18),
+        "0x"
+      );
+      const expiredReceipt = await expiredTx.wait();
+      const expiredOp = expiredReceipt.logs.find(log => log.fragment.name === "OperationRequested").args.operationId;
+
+      await network.provider.send("evm_increaseTime", [3 * 24 * 60 * 60 + 1]);
+      await network.provider.send("evm_mine");
+
+      const expectedPruned = await vault.pruneOperationsByIds.staticCall([executedOp, pendingOp, expiredOp]);
+      expect(expectedPruned).to.equal(3n);
+
+      await vault.pruneOperationsByIds([executedOp, pendingOp, expiredOp]);
+
+      expect(await vault.getOperationIdsCount()).to.equal(0n);
+      expect(await vault.isOperationPrunable(executedOp)).to.equal(false);
+      expect(await vault.isOperationPrunable(expiredOp)).to.equal(false);
+      expect(await vault.isOperationPrunable(pendingOp)).to.equal(false);
+    });
+
+    it("Should prune at most 100 operations per pruneOperations call", async function () {
+      const totalOperations = 105;
+      for (let i = 0; i < totalOperations; i++) {
+        await vault.requestOperation(
+          OP.SET_BRIDGE_OUT_AMOUNT,
+          ethers.ZeroAddress,
+          ethers.parseUnits((20000 + i).toString(), 18),
+          "0x"
+        );
+      }
+
+      expect(await vault.getOperationIdsCount()).to.equal(105n);
+
+      await network.provider.send("evm_increaseTime", [3 * 24 * 60 * 60 + 1]);
+      await network.provider.send("evm_mine");
+
+      const expectedPruned = await vault.pruneOperations.staticCall();
+      expect(expectedPruned).to.equal(100n);
+
+      await vault.pruneOperations();
+      expect(await vault.getOperationIdsCount()).to.equal(5n);
+    });
+
+    it("Should enforce explicit ID prune input cap", async function () {
+      const tooManyIds = [];
+      for (let i = 0; i < 101; i++) {
+        tooManyIds.push(ethers.hexlify(ethers.randomBytes(32)));
+      }
+
+      await expect(
+        vault.pruneOperationsByIds(tooManyIds)
+      ).to.be.revertedWith("Too many operation IDs");
     });
   });
 });

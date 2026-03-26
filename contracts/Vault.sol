@@ -28,7 +28,11 @@ contract Vault is ReentrancyGuard, Ownable {
     }
 
     mapping(bytes32 => Operation) public operations;
+    bytes32[] public operationIds;
+    mapping(bytes32 => uint256) private operationIdIndexes;
     uint256 public operationCount;
+
+    uint256 public constant MAX_PRUNE_BATCH = 100;
 
     uint256 public constant OPERATION_DEADLINE = 3 days;
 
@@ -101,6 +105,11 @@ contract Vault is ReentrancyGuard, Ownable {
 
     event VaultHalted(uint256 timestamp);
 
+    event OperationPruned(
+        bytes32 indexed operationId,
+        uint256 timestamp
+    );
+
     modifier whenNotHalted() {
         require(!halted, "Vault is permanently halted");
         _;
@@ -149,6 +158,8 @@ contract Vault is ReentrancyGuard, Ownable {
         op.executed = false;
         op.numSignatures = 0;
         op.deadline = deadline;
+        operationIdIndexes[operationId] = operationIds.length;
+        operationIds.push(operationId);
 
         emit OperationRequested(
             operationId,
@@ -296,6 +307,73 @@ contract Vault is ReentrancyGuard, Ownable {
 
     function getChainId() public view returns (uint256) {
         return chainId;
+    }
+
+    function getOperationIdsCount() public view returns (uint256) {
+        return operationIds.length;
+    }
+
+    function getAllOperationIds() public view returns (bytes32[] memory) {
+        return operationIds;
+    }
+
+    function isOperationPrunable(bytes32 operationId) public view returns (bool) {
+        Operation storage op = operations[operationId];
+        if (op.deadline == 0) {
+            return false;
+        }
+
+        bool isExecuted = op.executed;
+        bool isExpired = block.timestamp > op.deadline;
+        bool isRejected = isExpired && !isExecuted;
+        return isExecuted || isExpired || isRejected;
+    }
+
+    function pruneOperationsByIds(bytes32[] calldata operationIdsToPrune) external returns (uint256 prunedCount) {
+        require(operationIdsToPrune.length <= MAX_PRUNE_BATCH, "Too many operation IDs");
+
+        for (uint256 i = 0; i < operationIdsToPrune.length; i++) {
+            if (_pruneOperationIfPrunable(operationIdsToPrune[i])) {
+                prunedCount++;
+            }
+        }
+    }
+
+    function pruneOperations() external returns (uint256 prunedCount) {
+        uint256 i = 0;
+        while (i < operationIds.length && prunedCount < MAX_PRUNE_BATCH) {
+            bytes32 operationId = operationIds[i];
+            if (_pruneOperationIfPrunable(operationId)) {
+                prunedCount++;
+                continue;
+            }
+            i++;
+        }
+    }
+
+    function _pruneOperationIfPrunable(bytes32 operationId) internal returns (bool) {
+        if (!isOperationPrunable(operationId)) {
+            return false;
+        }
+
+        uint256 operationIndex = operationIdIndexes[operationId];
+        if (operationIndex >= operationIds.length || operationIds[operationIndex] != operationId) {
+            return false;
+        }
+
+        uint256 lastIndex = operationIds.length - 1;
+        if (operationIndex != lastIndex) {
+            bytes32 swappedOperationId = operationIds[lastIndex];
+            operationIds[operationIndex] = swappedOperationId;
+            operationIdIndexes[swappedOperationId] = operationIndex;
+        }
+
+        operationIds.pop();
+        delete operationIdIndexes[operationId];
+        delete operations[operationId];
+
+        emit OperationPruned(operationId, block.timestamp);
+        return true;
     }
 
     function isOperationExpired(bytes32 operationId) public view returns (bool) {
